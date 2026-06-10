@@ -1,6 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
+import { Pwa } from '@/components/pwa'
 import './globals.css'
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
@@ -33,6 +34,14 @@ export const metadata: Metadata = {
   },
 }
 
+export const viewport: Viewport = {
+  themeColor: '#18181b',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -45,6 +54,7 @@ export default function RootLayout({
     >
       <body className="font-sans antialiased">
         {children}
+        <Pwa />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

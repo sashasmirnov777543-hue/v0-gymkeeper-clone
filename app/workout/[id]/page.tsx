@@ -8,9 +8,9 @@ import {
   workoutExercises,
   workouts,
 } from "@/lib/db/schema"
-import { startSession } from "@/app/actions/workout"
 import { BottomNav } from "@/components/bottom-nav"
-import { ArrowLeft, Play } from "lucide-react"
+import { StartWorkoutButton } from "@/components/start-workout-button"
+import { ArrowLeft } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
@@ -45,8 +45,6 @@ export default async function WorkoutPage({
       )
       .limit(1),
   ])
-
-  const startAction = startSession.bind(null, workoutId)
 
   return (
     <div className="min-h-screen bg-background pb-32">

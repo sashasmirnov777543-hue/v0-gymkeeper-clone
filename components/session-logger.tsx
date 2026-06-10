@@ -2,9 +2,16 @@
 
 import { useMemo, useState, useTransition } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { ArrowLeft, Check, ChevronDown, Minus, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cancelSession, deleteSet, finishSession, logSet } from "@/app/actions/workout"
+import {
+  cancelLocalSession,
+  finishLocalSession,
+  pushOp,
+  saveLocalSets,
+} from "@/lib/offline"
 import {
   parsePrescribedWeight,
   recommendWeight,
@@ -39,6 +46,7 @@ export function SessionLogger({
   exercises,
   initialSets,
   lastSetsByName,
+  offlineKey,
 }: {
   session: { id: number; status: string; startedAt: string }
   workout: { id: number; title: string }
@@ -46,13 +54,68 @@ export function SessionLogger({
   exercises: Exercise[]
   initialSets: SetRow[]
   lastSetsByName: Record<string, LoggedSetLite[]>
+  /** Ключ локальной (офлайн) сессии — все операции идут в очередь синхронизации */
+  offlineKey?: string
 }) {
+  const router = useRouter()
   const [sets, setSets] = useState<SetRow[]>(initialSets)
   const [openId, setOpenId] = useState<number | null>(
     exercises.find((e) => e.weightText || e.targetReps)?.id ?? null,
   )
   const [isPending, startTransition] = useTransition()
   const readOnly = session.status !== "active"
+
+  // ссылка на сессию для очереди: локальный ключ или реальный id
+  const sessionRef: number | string = offlineKey ?? session.id
+
+  const persistLocal = (next: SetRow[]) => {
+    if (offlineKey) saveLocalSets(offlineKey, next)
+  }
+
+  const handleFinish = () => {
+    if (offlineKey) {
+      finishLocalSession(offlineKey)
+      router.push("/history")
+      return
+    }
+    startTransition(async () => {
+      try {
+        await finishSession(session.id)
+      } catch (err) {
+        // офлайн: ставим в очередь и уходим
+        if (isOffline(err)) {
+          pushOp({
+            kind: "finish",
+            sessionRef,
+            finishedAt: new Date().toISOString(),
+          })
+          router.push("/history")
+        } else {
+          throw err
+        }
+      }
+    })
+  }
+
+  const handleCancel = () => {
+    if (offlineKey) {
+      cancelLocalSession(offlineKey)
+      router.push("/")
+      return
+    }
+    startTransition(async () => {
+      try {
+        await cancelSession(session.id)
+      } catch (err) {
+        if (isOffline(err)) {
+          pushOp({ kind: "cancel", sessionRef })
+          router.push("/")
+        } else {
+          throw err
+        }
+      }
+    })
+  }
 
   const setsByExercise = useMemo(() => {
     const map: Record<number, SetRow[]> = {}
@@ -101,11 +164,27 @@ export function SessionLogger({
               isOpen={isOpen}
               readOnly={readOnly}
               onToggle={() => setOpenId(isOpen ? null : ex.id)}
-              onLogged={(row) => setSets((prev) => [...prev, row])}
-              onDeleted={(setId) =>
-                setSets((prev) => prev.filter((s) => s.id !== setId))
+              onLogged={(row) =>
+                setSets((prev) => {
+                  const next = [...prev, row]
+                  persistLocal(next)
+                  return next
+                })
               }
-              sessionId={session.id}
+              onReplaceId={(tempId, realId) =>
+                setSets((prev) =>
+                  prev.map((s) => (s.id === tempId ? { ...s, id: realId } : s)),
+                )
+              }
+              onDeleted={(setId) =>
+                setSets((prev) => {
+                  const next = prev.filter((s) => s.id !== setId)
+                  persistLocal(next)
+                  return next
+                })
+              }
+              sessionRef={sessionRef}
+              offline={Boolean(offlineKey)}
             />
           )
         })}
@@ -120,7 +199,7 @@ export function SessionLogger({
               disabled={isPending}
               onClick={() => {
                 if (confirm("Отменить тренировку? Все записанные подходы будут удалены.")) {
-                  startTransition(() => cancelSession(session.id))
+                  handleCancel()
                 }
               }}
             >
@@ -129,7 +208,7 @@ export function SessionLogger({
             <Button
               className="flex-[2]"
               disabled={isPending || totalLogged === 0}
-              onClick={() => startTransition(() => finishSession(session.id))}
+              onClick={handleFinish}
             >
               <Check className="size-4" />
               Завершить тренировку
@@ -149,8 +228,10 @@ function ExerciseCard({
   readOnly,
   onToggle,
   onLogged,
+  onReplaceId,
   onDeleted,
-  sessionId,
+  sessionRef,
+  offline,
 }: {
   exercise: Exercise
   doneSets: SetRow[]
@@ -159,8 +240,10 @@ function ExerciseCard({
   readOnly: boolean
   onToggle: () => void
   onLogged: (row: SetRow) => void
+  onReplaceId: (tempId: number, realId: number) => void
   onDeleted: (setId: number) => void
-  sessionId: number
+  sessionRef: number | string
+  offline: boolean
 }) {
   const prescribed = parsePrescribedWeight(exercise.weightText)
 
@@ -274,7 +357,15 @@ function ExerciseCard({
                       aria-label={`Удалить подход ${i + 1}`}
                       onClick={() => {
                         onDeleted(s.id)
-                        deleteSet(s.id, sessionId)
+                        // временные id (< 0) ещё не существуют на сервере
+                        if (offline || s.id < 0) return
+                        deleteSet(s.id, typeof sessionRef === "number" ? sessionRef : 0).catch(
+                          (err) => {
+                            if (isOffline(err)) {
+                              pushOp({ kind: "deleteSet", setId: s.id })
+                            }
+                          },
+                        )
                       }}
                     >
                       <Trash2 className="size-4" />
@@ -292,23 +383,57 @@ function ExerciseCard({
               targetRirMin={exercise.targetRirMin}
               onSubmit={async (weight, reps, rir) => {
                 const tempId = -Date.now()
+                const setNumber = doneSets.length + 1
                 const row: SetRow = {
                   id: tempId,
                   workoutExerciseId: exercise.id,
-                  setNumber: doneSets.length + 1,
+                  setNumber,
                   weight,
                   reps,
                   rir,
                 }
                 onLogged(row)
-                await logSet({
-                  sessionId,
-                  workoutExerciseId: exercise.id,
-                  setNumber: doneSets.length + 1,
-                  weight,
-                  reps,
-                  rir,
-                })
+
+                // офлайн-сессия: только очередь, без сервера
+                if (offline || typeof sessionRef === "string") {
+                  pushOp({
+                    kind: "set",
+                    sessionRef,
+                    workoutExerciseId: exercise.id,
+                    setNumber,
+                    weight,
+                    reps,
+                    rir,
+                  })
+                  return
+                }
+
+                try {
+                  const inserted = await logSet({
+                    sessionId: sessionRef,
+                    workoutExerciseId: exercise.id,
+                    setNumber,
+                    weight,
+                    reps,
+                    rir,
+                  })
+                  if (inserted?.id != null) onReplaceId(tempId, inserted.id)
+                } catch (err) {
+                  // сеть пропала посреди тренировки: ставим в очередь
+                  if (isOffline(err)) {
+                    pushOp({
+                      kind: "set",
+                      sessionRef,
+                      workoutExerciseId: exercise.id,
+                      setNumber,
+                      weight,
+                      reps,
+                      rir,
+                    })
+                  } else {
+                    throw err
+                  }
+                }
               }}
             />
           )}
@@ -316,6 +441,12 @@ function ExerciseCard({
       )}
     </section>
   )
+}
+
+/** Ошибка вызвана отсутствием сети (а не логикой сервера)? */
+function isOffline(err: unknown): boolean {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return true
+  return err instanceof TypeError
 }
 
 function SetForm({

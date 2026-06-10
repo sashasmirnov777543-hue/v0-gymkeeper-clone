@@ -40,15 +40,19 @@ export async function logSet(input: {
   reps: number | null
   rir: number | null
 }) {
-  await db.insert(loggedSets).values({
-    sessionId: input.sessionId,
-    workoutExerciseId: input.workoutExerciseId,
-    setNumber: input.setNumber,
-    weight: input.weight != null ? String(input.weight) : null,
-    reps: input.reps,
-    rir: input.rir,
-  })
+  const inserted = await db
+    .insert(loggedSets)
+    .values({
+      sessionId: input.sessionId,
+      workoutExerciseId: input.workoutExerciseId,
+      setNumber: input.setNumber,
+      weight: input.weight != null ? String(input.weight) : null,
+      reps: input.reps,
+      rir: input.rir,
+    })
+    .returning({ id: loggedSets.id })
   revalidatePath(`/session/${input.sessionId}`)
+  return { id: inserted[0].id }
 }
 
 export async function deleteSet(setId: number, sessionId: number) {
