@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema"
 import { getLastSetsByExerciseNames } from "@/app/actions/workout"
 import { SessionLogger } from "@/components/session-logger"
+import { CardioSession } from "@/components/cardio-session"
 
 export const dynamic = "force-dynamic"
 
@@ -35,6 +36,29 @@ export default async function SessionPage({
     .where(eq(workouts.id, session.workoutId))
     .limit(1)
   if (!workout) notFound()
+
+  const [cardioCycleRow] =
+    workout.kind === "cardio"
+      ? await db.select().from(cycles).where(eq(cycles.id, workout.cycleId)).limit(1)
+      : [undefined]
+
+  if (workout.kind === "cardio") {
+    return (
+      <CardioSession
+        session={{ id: session.id, status: session.status }}
+        workout={{
+          id: workout.id,
+          title: workout.title,
+          cardioZone: workout.cardioZone,
+          cardioMinutes: workout.cardioMinutes,
+        }}
+        cycle={{
+          number: cardioCycleRow?.number ?? 0,
+          name: cardioCycleRow?.name ?? "",
+        }}
+      />
+    )
+  }
 
   const [[cycle], exercises, sets] = await Promise.all([
     db.select().from(cycles).where(eq(cycles.id, workout.cycleId)).limit(1),
@@ -72,6 +96,7 @@ export default async function SessionPage({
         targetRirMin: e.targetRirMin,
         targetRirMax: e.targetRirMax,
         comment: e.comment,
+        restSeconds: e.restSeconds,
       }))}
       initialSets={sets.map((s) => ({
         id: s.id,

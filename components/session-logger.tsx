@@ -6,6 +6,11 @@ import { useRouter } from "next/navigation"
 import { ArrowLeft, Check, ChevronDown, Minus, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
+import { HeartRateBadge } from "@/components/heart-rate"
+import { RestTimer } from "@/components/rest-timer"
+import { WarmupPlates } from "@/components/warmup-plates"
+import { useWakeLock } from "@/lib/heart-rate"
+import { unlockAudio } from "@/lib/sound"
 import { cancelSession, deleteSet, finishSession, logSet } from "@/app/actions/workout"
 import {
   cancelLocalSession,
@@ -29,6 +34,7 @@ type Exercise = {
   targetRirMin: number | null
   targetRirMax: number | null
   comment: string | null
+  restSeconds: number | null
 }
 
 type SetRow = {
@@ -64,7 +70,11 @@ export function SessionLogger({
     exercises.find((e) => e.weightText || e.targetReps)?.id ?? null,
   )
   const [isPending, startTransition] = useTransition()
+  const [rest, setRest] = useState<{ seconds: number; label: string } | null>(null)
   const readOnly = session.status !== "active"
+
+  // экран не гаснет, пока тренировка активна
+  useWakeLock(!readOnly)
 
   // ссылка на сессию для очереди: локальный ключ или реальный id
   const sessionRef: number | string = offlineKey ?? session.id
@@ -148,6 +158,7 @@ export function SessionLogger({
           <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
             {totalLogged} подх.
           </span>
+          <HeartRateBadge />
         </div>
       </header>
 
@@ -186,6 +197,7 @@ export function SessionLogger({
               }
               sessionRef={sessionRef}
               offline={Boolean(offlineKey)}
+              onRest={(seconds, label) => setRest({ seconds, label })}
             />
           )
         })}
@@ -217,6 +229,14 @@ export function SessionLogger({
           </div>
         </div>
       )}
+
+      {rest && (
+        <RestTimer
+          seconds={rest.seconds}
+          label={rest.label}
+          onClose={() => setRest(null)}
+        />
+      )}
     </main>
   )
 }
@@ -233,6 +253,7 @@ function ExerciseCard({
   onDeleted,
   sessionRef,
   offline,
+  onRest,
 }: {
   exercise: Exercise
   doneSets: SetRow[]
@@ -245,6 +266,7 @@ function ExerciseCard({
   onDeleted: (setId: number) => void
   sessionRef: number | string
   offline: boolean
+  onRest: (seconds: number, label: string) => void
 }) {
   const prescribed = parsePrescribedWeight(exercise.weightText)
 
@@ -380,6 +402,10 @@ function ExerciseCard({
             </ul>
           )}
 
+          {!readOnly && doneSets.length === 0 && hasTargets && (
+            <WarmupPlates workingWeight={rec?.weight ?? prescribed} />
+          )}
+
           {!readOnly && (
             <SetForm
               key={doneSets.length}
@@ -397,6 +423,11 @@ function ExerciseCard({
                   rir,
                 }
                 onLogged(row)
+
+                // запускаем таймер отдыха для этого упражнения
+                if (exercise.restSeconds && exercise.restSeconds > 0) {
+                  onRest(exercise.restSeconds, `Отдых · ${exercise.name}`)
+                }
 
                 // офлайн-сессия: только очередь, без сервера
                 if (offline || typeof sessionRef === "string") {
@@ -480,6 +511,7 @@ function SetForm({
       className="flex flex-col gap-3"
       onSubmit={async (e) => {
         e.preventDefault()
+        unlockAudio()
         setSaving(true)
         const w = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null
         const r = reps.trim() ? Number.parseInt(reps, 10) : null

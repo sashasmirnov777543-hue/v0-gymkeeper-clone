@@ -11,7 +11,7 @@ import {
 import { BottomNav } from "@/components/bottom-nav"
 import { StartWorkoutButton } from "@/components/start-workout-button"
 import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, Bike, Heart, Timer } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
@@ -71,6 +71,46 @@ export default async function WorkoutPage({
       </header>
 
       <main className="mx-auto max-w-lg px-4 py-4">
+        {workout.kind === "cardio" ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-5">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                <Bike className="size-7" aria-hidden="true" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {workout.cardioMinutes && workout.cardioMinutes !== "—"
+                    ? `${workout.cardioMinutes} мин`
+                    : "По плану"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Зона {workout.cardioZone ?? "Z2"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3">
+              <Heart className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+              <p className="text-pretty text-sm leading-relaxed text-muted-foreground">
+                Подключите пульс с часов HUAWEI WATCH GT 5 PRO (на часах: тренировка →
+                Трансляция пульса). Приложение покажет вашу зону и подаст сигнал, если
+                выйдете за её пределы.
+              </p>
+            </div>
+            <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3">
+              <Timer className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+              <p className="text-pretty text-sm leading-relaxed text-muted-foreground">
+                Секундомер фиксирует длительность, а после завершения средний пульс и
+                время сохранятся в историю.
+              </p>
+            </div>
+            {cycle?.notes && (
+              <p className="rounded-lg border border-border bg-card px-4 py-3 text-pretty text-sm leading-relaxed text-muted-foreground">
+                {cycle.notes}
+              </p>
+            )}
+          </div>
+        ) : (
+        <>
         <ul className="flex flex-col gap-2">
           {exercises.map((ex, i) => (
             <li
@@ -124,6 +164,8 @@ export default async function WorkoutPage({
           <p className="mt-4 rounded-lg border border-border bg-card px-4 py-3 text-pretty text-sm leading-relaxed text-muted-foreground">
             {cycle.notes}
           </p>
+        )}
+        </>
         )}
       </main>
 

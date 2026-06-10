@@ -33,6 +33,9 @@ export async function GET() {
         label: w.label,
         title: w.title,
         notes: w.notes,
+        kind: w.kind,
+        cardioZone: w.cardioZone,
+        cardioMinutes: w.cardioMinutes,
         exercises: allExercises
           .filter((e) => e.workoutId === w.id)
           .map((e) => ({
@@ -45,6 +48,7 @@ export async function GET() {
             targetRirMin: e.targetRirMin,
             targetRirMax: e.targetRirMax,
             comment: e.comment,
+            restSeconds: e.restSeconds,
           })),
       })),
   }))

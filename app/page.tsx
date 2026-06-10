@@ -3,7 +3,7 @@ import { asc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { appSettings, cycles, workouts, sessions } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
-import { ChevronRight, Flame } from "lucide-react"
+import { Bike, ChevronRight, Dumbbell, Flame } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
@@ -108,24 +108,45 @@ export default async function HomePage() {
                             </span>
                           )}
                         </div>
-                        <div className="flex gap-2 px-4 pb-3 pt-2">
-                          {cw.map((w) => (
-                            <Link
-                              key={w.id}
-                              href={`/workout/${w.id}`}
-                              className={`flex flex-1 items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                                activeWorkoutIds.has(w.id)
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-secondary text-secondary-foreground hover:bg-secondary/70"
-                              }`}
-                            >
-                              <span>{w.label === "A" ? "Тр. A" : "Тр. B"}</span>
-                              <ChevronRight
-                                className="size-4 opacity-60"
-                                aria-hidden="true"
-                              />
-                            </Link>
-                          ))}
+                        <div className="grid grid-cols-2 gap-2 px-4 pb-3 pt-2">
+                          {cw.map((w) => {
+                            const isCardio = w.kind === "cardio"
+                            const active = activeWorkoutIds.has(w.id)
+                            return (
+                              <Link
+                                key={w.id}
+                                href={`/workout/${w.id}`}
+                                className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                                  active
+                                    ? "bg-primary text-primary-foreground"
+                                    : isCardio
+                                      ? "bg-secondary/60 text-muted-foreground hover:bg-secondary"
+                                      : "bg-secondary text-secondary-foreground hover:bg-secondary/70"
+                                }`}
+                              >
+                                {isCardio ? (
+                                  <Bike className="size-4 shrink-0 opacity-70" aria-hidden="true" />
+                                ) : (
+                                  <Dumbbell className="size-4 shrink-0 opacity-70" aria-hidden="true" />
+                                )}
+                                <span className="min-w-0 flex-1 truncate">
+                                  {w.label === "A"
+                                    ? "Тр. A"
+                                    : w.label === "B"
+                                      ? "Тр. B"
+                                      : w.label === "B1"
+                                        ? `Кардио ${w.cardioMinutes ?? ""}`
+                                        : w.label === "B3"
+                                          ? "Кардио кор."
+                                          : w.label}
+                                </span>
+                                <ChevronRight
+                                  className="size-4 shrink-0 opacity-60"
+                                  aria-hidden="true"
+                                />
+                              </Link>
+                            )
+                          })}
                         </div>
                         {hasActive && (
                           <p className="px-4 pb-3 text-xs text-primary">

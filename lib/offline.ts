@@ -20,6 +20,7 @@ export type CachedExercise = {
   targetRirMin: number | null
   targetRirMax: number | null
   comment: string | null
+  restSeconds: number | null
 }
 
 export type CachedWorkout = {
@@ -28,6 +29,9 @@ export type CachedWorkout = {
   label: string
   title: string
   notes: string | null
+  kind: string
+  cardioZone: string | null
+  cardioMinutes: string | null
   exercises: CachedExercise[]
 }
 

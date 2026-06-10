@@ -92,6 +92,25 @@ export async function cancelSession(sessionId: number) {
   redirect("/")
 }
 
+/** Завершение кардио-сессии: пишем длительность и средний пульс */
+export async function finishCardioSession(input: {
+  sessionId: number
+  durationSeconds: number
+  avgHr: number | null
+}) {
+  await db
+    .update(sessions)
+    .set({
+      status: "completed",
+      finishedAt: new Date(),
+      durationSeconds: input.durationSeconds,
+      avgHr: input.avgHr,
+    })
+    .where(eq(sessions.id, input.sessionId))
+  revalidatePath("/")
+  revalidatePath("/history")
+}
+
 /**
  * Последние выполненные подходы по каждому упражнению (по имени упражнения,
  * чтобы рекомендации переносились между циклами).
@@ -140,4 +159,57 @@ export async function getLastSetsByExerciseNames(names: string[]) {
     }
   }
   return result
+}
+
+/**
+ * История упражнения по имени: для последних N завершённых сессий —
+ * лучший рабочий подход (максимальный вес, при равенстве больше повторов).
+ * Для мини-графика прогресса в карточке упражнения.
+ */
+export async function getExerciseHistory(name: string, limit = 6) {
+  const rows = await db
+    .select({
+      sessionId: loggedSets.sessionId,
+      weight: loggedSets.weight,
+      reps: loggedSets.reps,
+      startedAt: sessions.startedAt,
+    })
+    .from(loggedSets)
+    .innerJoin(
+      workoutExercises,
+      eq(loggedSets.workoutExerciseId, workoutExercises.id),
+    )
+    .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
+    .where(and(eq(sessions.status, "completed"), eq(workoutExercises.name, name)))
+    .orderBy(desc(sessions.startedAt))
+
+  // группируем по сессии, берём лучший подход
+  const bySession = new Map<
+    number,
+    { date: string; weight: number; reps: number }
+  >()
+  const order: number[] = []
+  for (const r of rows) {
+    const w = r.weight != null ? Number.parseFloat(r.weight) : 0
+    if (!bySession.has(r.sessionId)) {
+      order.push(r.sessionId)
+      bySession.set(r.sessionId, {
+        date: r.startedAt.toISOString(),
+        weight: w,
+        reps: r.reps ?? 0,
+      })
+    } else {
+      const cur = bySession.get(r.sessionId)!
+      if (w > cur.weight || (w === cur.weight && (r.reps ?? 0) > cur.reps)) {
+        cur.weight = w
+        cur.reps = r.reps ?? 0
+      }
+    }
+  }
+
+  // от старых к новым, последние `limit`
+  return order
+    .slice(0, limit)
+    .reverse()
+    .map((id) => bySession.get(id)!)
 }
