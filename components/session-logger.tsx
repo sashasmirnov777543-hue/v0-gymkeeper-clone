@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, Check, ChevronDown, Minus, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
 import { cancelSession, deleteSet, finishSession, logSet } from "@/app/actions/workout"
 import {
   cancelLocalSession,
@@ -269,39 +270,42 @@ function ExerciseCard({
 
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-card">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left"
-        aria-expanded={isOpen}
-      >
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold leading-snug text-pretty">
-            {exercise.name}
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {[
-              exercise.weightText,
-              exercise.targetReps && `${exercise.targetReps} повт.`,
-              exercise.targetSets && `${exercise.targetSets} подх.`,
-              exercise.targetRirMin != null &&
-                `RIR ${exercise.targetRirMin}${exercise.targetRirMax != null && exercise.targetRirMax !== exercise.targetRirMin ? `–${exercise.targetRirMax}` : ""}`,
-            ]
-              .filter(Boolean)
-              .join(" · ") || "Без параметров"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {doneSets.length > 0 && (
-            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-              {doneSets.length}
-            </span>
-          )}
-          <ChevronDown
-            className={`size-4 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`}
-          />
-        </div>
-      </button>
+      <div className="flex items-start gap-1 px-4 py-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+          aria-expanded={isOpen}
+        >
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold leading-snug text-pretty">
+              {exercise.name}
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {[
+                exercise.weightText,
+                exercise.targetReps && `${exercise.targetReps} повт.`,
+                exercise.targetSets && `${exercise.targetSets} подх.`,
+                exercise.targetRirMin != null &&
+                  `RIR ${exercise.targetRirMin}${exercise.targetRirMax != null && exercise.targetRirMax !== exercise.targetRirMin ? `–${exercise.targetRirMax}` : ""}`,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Без параметров"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 pt-0.5">
+            {doneSets.length > 0 && (
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                {doneSets.length}
+              </span>
+            )}
+            <ChevronDown
+              className={`size-4 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`}
+            />
+          </div>
+        </button>
+        <ExerciseGuideButton exerciseName={exercise.name} />
+      </div>
 
       {isOpen && (
         <div className="border-t border-border px-4 py-3">

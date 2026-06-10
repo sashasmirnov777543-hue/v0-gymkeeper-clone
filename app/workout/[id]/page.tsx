@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
 import { StartWorkoutButton } from "@/components/start-workout-button"
+import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
 import { ArrowLeft } from "lucide-react"
 
 export const dynamic = "force-dynamic"
@@ -78,12 +79,15 @@ export default async function WorkoutPage({
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-medium leading-snug">
-                    <span className="font-mono text-sm text-muted-foreground">
-                      {i + 1}.{" "}
-                    </span>
-                    {ex.name}
-                  </p>
+                  <div className="flex items-center gap-1">
+                    <p className="font-medium leading-snug">
+                      <span className="font-mono text-sm text-muted-foreground">
+                        {i + 1}.{" "}
+                      </span>
+                      {ex.name}
+                    </p>
+                    <ExerciseGuideButton exerciseName={ex.name} />
+                  </div>
                   {ex.weightText && (
                     <p className="mt-0.5 font-mono text-sm text-primary">
                       {ex.weightText}
