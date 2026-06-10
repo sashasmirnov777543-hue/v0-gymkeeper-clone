@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { desc, eq, inArray } from "drizzle-orm"
-import { CalendarDays, ChevronRight } from "lucide-react"
+import { CalendarDays, ChevronRight, TrendingUp } from "lucide-react"
 import { db } from "@/lib/db"
 import { cycles, loggedSets, sessions, workouts } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
@@ -17,7 +17,19 @@ const timeFmt = new Intl.DateTimeFormat("ru-RU", {
   minute: "2-digit",
 })
 
-export default async function HistoryPage() {
+export default async function HistoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const params = await searchParams
+  const tmMacro = typeof params.tmMacro === "string" ? params.tmMacro : null
+  const newTm = typeof params.newTm === "string" ? params.newTm : null
+  const oldTm =
+    typeof params.oldTm === "string" && params.oldTm !== "" ? params.oldTm : null
+  const e1rm = typeof params.e1rm === "string" ? params.e1rm : null
+  const amrap = typeof params.amrap === "string" ? params.amrap : null
+
   const rows = await db
     .select({
       id: sessions.id,
@@ -63,6 +75,37 @@ export default async function HistoryPage() {
             : "Пока нет завершённых тренировок"}
         </p>
       </header>
+
+      {tmMacro && newTm && (
+        <div className="px-4 pt-2">
+          <div className="rounded-xl border border-primary/40 bg-primary/10 px-4 py-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+              <TrendingUp className="size-4 shrink-0" aria-hidden="true" />
+              ТМ пересчитан по AMRAP
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-foreground">
+              {amrap && `AMRAP ${amrap.replace("x", " кг × ")} повт.`}
+              {e1rm && ` → e1RM ${e1rm} кг.`}
+            </p>
+            <p className="mt-0.5 text-sm leading-relaxed text-foreground">
+              {"Новый ТМ Макро "}
+              {tmMacro}
+              {": "}
+              {oldTm && (
+                <span className="text-muted-foreground line-through">
+                  {oldTm} кг
+                </span>
+              )}
+              {oldTm && " → "}
+              <span className="font-bold">{newTm} кг</span>
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground text-pretty">
+              Рабочие веса всех циклов Макро {tmMacro} обновлены — новые
+              значения уже в плане тренировок
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2 px-4 py-2">
         {rows.length === 0 && (

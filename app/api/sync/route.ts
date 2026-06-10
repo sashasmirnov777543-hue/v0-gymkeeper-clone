@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { loggedSets, sessions } from "@/lib/db/schema"
+import { applyAmrapTmRecalc, type TmRecalcResult } from "@/lib/tm-recalc"
 
 export const dynamic = "force-dynamic"
 
@@ -41,6 +42,9 @@ export async function POST(req: Request) {
 
   // localKey -> реальный id сессии в БД
   const sessionMap = new Map<string, number>()
+
+  // результаты пересчёта ТМ после AMRAP (вернём клиенту для уведомления)
+  const tmRecalcs: TmRecalcResult[] = []
 
   const resolveRef = (ref: number | string): number | null => {
     if (typeof ref === "number") return ref
@@ -82,6 +86,9 @@ export async function POST(req: Request) {
           .update(sessions)
           .set({ status: "completed", finishedAt: new Date(op.finishedAt) })
           .where(eq(sessions.id, sessionId))
+        // офлайн-завершённый AMRAP тоже пересчитывает ТМ
+        const recalc = await applyAmrapTmRecalc(sessionId)
+        if (recalc) tmRecalcs.push(recalc)
         break
       }
       case "cancel": {
@@ -101,5 +108,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, tmRecalcs })
 }

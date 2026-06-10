@@ -11,6 +11,7 @@ import {
 import { and, desc, eq, inArray } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
+import { applyAmrapTmRecalc } from "@/lib/tm-recalc"
 
 export async function startSession(workoutId: number) {
   // если уже есть активная сессия этой тренировки — продолжаем её
@@ -65,8 +66,22 @@ export async function finishSession(sessionId: number) {
     .update(sessions)
     .set({ status: "completed", finishedAt: new Date() })
     .where(eq(sessions.id, sessionId))
+
+  // если в сессии был AMRAP — автоматически пересчитываем ТМ следующего макро
+  const recalc = await applyAmrapTmRecalc(sessionId)
+
   revalidatePath("/")
   revalidatePath("/history")
+  if (recalc) {
+    const q = new URLSearchParams({
+      tmMacro: String(recalc.macro),
+      newTm: String(recalc.newTm),
+      oldTm: recalc.oldTm != null ? String(recalc.oldTm) : "",
+      e1rm: String(recalc.e1rm),
+      amrap: `${recalc.amrapWeight}x${recalc.amrapReps}`,
+    })
+    redirect(`/history?${q.toString()}`)
+  }
   redirect("/history")
 }
 
