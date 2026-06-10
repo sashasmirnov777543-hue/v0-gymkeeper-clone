@@ -23,6 +23,9 @@ export const workouts = pgTable("workouts", {
   title: text("title").notNull(),
   notes: text("notes"),
   sortOrder: integer("sort_order").notNull().default(0),
+  kind: text("kind").notNull().default("strength"),
+  cardioZone: text("cardio_zone"),
+  cardioMinutes: text("cardio_minutes"),
 })
 
 export const workoutExercises = pgTable("workout_exercises", {
@@ -37,6 +40,7 @@ export const workoutExercises = pgTable("workout_exercises", {
   targetRirMin: integer("target_rir_min"),
   targetRirMax: integer("target_rir_max"),
   comment: text("comment"),
+  restSeconds: integer("rest_seconds"),
 })
 
 export const sessions = pgTable("sessions", {
@@ -48,6 +52,8 @@ export const sessions = pgTable("sessions", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   status: text("status").notNull().default("active"),
   notes: text("notes"),
+  durationSeconds: integer("duration_seconds"),
+  avgHr: integer("avg_hr"),
 })
 
 export const loggedSets = pgTable("logged_sets", {
