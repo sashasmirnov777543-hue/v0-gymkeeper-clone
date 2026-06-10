@@ -14,12 +14,13 @@ const MACRO_TITLES: Record<number, string> = {
 }
 
 export default async function HomePage() {
-  const [allCycles, allWorkouts, settingsRows, activeSessions] =
+  const [allCycles, allWorkouts, settingsRows, activeSessions, doneSessions] =
     await Promise.all([
       db.select().from(cycles).orderBy(asc(cycles.sortOrder)),
       db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
       db.select().from(appSettings),
       db.select().from(sessions).where(eq(sessions.status, "active")),
+      db.select().from(sessions).where(eq(sessions.status, "completed")),
     ])
 
   const settings = Object.fromEntries(settingsRows.map((s) => [s.key, s.value]))
@@ -30,6 +31,30 @@ export default async function HomePage() {
     3: settings.tm_macro3 ?? "116",
   }
   const activeWorkoutIds = new Set(activeSessions.map((s) => s.workoutId))
+
+  // --- трекер позиции в программе ---
+  const completedWorkoutIds = new Set(doneSessions.map((s) => s.workoutId))
+  const totalWorkouts = allWorkouts.length
+  const doneCount = allWorkouts.filter((w) =>
+    completedWorkoutIds.has(w.id),
+  ).length
+
+  // идём по циклам начиная с текущего и ищем первую невыполненную тренировку
+  const orderedCycles = [...allCycles].sort((a, b) => a.sortOrder - b.sortOrder)
+  let nextWorkout: (typeof allWorkouts)[number] | null = null
+  let nextCycle: (typeof allCycles)[number] | null = null
+  for (const c of orderedCycles) {
+    if (c.number < currentCycle) continue
+    const cwSorted = allWorkouts
+      .filter((w) => w.cycleId === c.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+    const pending = cwSorted.find((w) => !completedWorkoutIds.has(w.id))
+    if (pending) {
+      nextWorkout = pending
+      nextCycle = c
+      break
+    }
+  }
 
   const macros = [1, 2, 3].map((m) => ({
     macro: m,
@@ -65,6 +90,58 @@ export default async function HomePage() {
             <ChevronRight className="size-5" aria-hidden="true" />
           </Link>
         )}
+
+        {activeSessions.length === 0 && nextWorkout && nextCycle && (
+          <Link
+            href={`/workout/${nextWorkout.id}`}
+            className="mb-4 block rounded-lg border border-primary/60 bg-card px-4 py-3"
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-primary">
+              Следующая тренировка
+            </p>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-2 font-semibold">
+                {nextWorkout.kind === "cardio" ? (
+                  <Bike className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                ) : (
+                  <Dumbbell className="size-5 shrink-0 text-primary" aria-hidden="true" />
+                )}
+                <span className="truncate">{nextWorkout.title}</span>
+              </span>
+              <ChevronRight
+                className="size-5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Цикл {nextCycle.number} · {nextCycle.name}
+            </p>
+          </Link>
+        )}
+
+        <div className="mb-5">
+          <div className="mb-1 flex items-baseline justify-between text-xs text-muted-foreground">
+            <span>Прогресс программы</span>
+            <span className="font-mono">
+              {doneCount} / {totalWorkouts}
+            </span>
+          </div>
+          <div
+            className="h-2 overflow-hidden rounded-full bg-secondary"
+            role="progressbar"
+            aria-valuenow={doneCount}
+            aria-valuemin={0}
+            aria-valuemax={totalWorkouts}
+            aria-label="Выполнено тренировок"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{
+                width: `${totalWorkouts > 0 ? (doneCount / totalWorkouts) * 100 : 0}%`,
+              }}
+            />
+          </div>
+        </div>
 
         <div className="flex flex-col gap-6">
           {macros.map(({ macro, cycles: mc }) => (
@@ -150,7 +227,7 @@ export default async function HomePage() {
                         </div>
                         {hasActive && (
                           <p className="px-4 pb-3 text-xs text-primary">
-                            Есть незавершённая сессия
+                            Есть незавершённая се��сия
                           </p>
                         )}
                       </div>

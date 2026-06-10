@@ -92,6 +92,35 @@ export async function cancelSession(sessionId: number) {
   redirect("/")
 }
 
+/** Сохранение заметки к тренировке (самочувствие, нюансы) */
+export async function saveSessionNotes(sessionId: number, notes: string) {
+  await db
+    .update(sessions)
+    .set({ notes: notes.trim() || null })
+    .where(eq(sessions.id, sessionId))
+  revalidatePath(`/session/${sessionId}`)
+  revalidatePath("/history")
+}
+
+/** Редактирование записанного подхода */
+export async function updateSet(input: {
+  setId: number
+  sessionId: number
+  weight: number | null
+  reps: number | null
+  rir: number | null
+}) {
+  await db
+    .update(loggedSets)
+    .set({
+      weight: input.weight != null ? String(input.weight) : null,
+      reps: input.reps,
+      rir: input.rir,
+    })
+    .where(eq(loggedSets.id, input.setId))
+  revalidatePath(`/session/${input.sessionId}`)
+}
+
 /** Завершение кардио-сессии: пишем длительность и средний пульс */
 export async function finishCardioSession(input: {
   sessionId: number

@@ -3,15 +3,23 @@
 import { useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Check, ChevronDown, Minus, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown, Minus, Pencil, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
+import { ExerciseHistory } from "@/components/exercise-history"
 import { HeartRateBadge } from "@/components/heart-rate"
 import { RestTimer } from "@/components/rest-timer"
+import { SessionNotes } from "@/components/session-notes"
 import { WarmupPlates } from "@/components/warmup-plates"
 import { useWakeLock } from "@/lib/heart-rate"
 import { unlockAudio } from "@/lib/sound"
-import { cancelSession, deleteSet, finishSession, logSet } from "@/app/actions/workout"
+import {
+  cancelSession,
+  deleteSet,
+  finishSession,
+  logSet,
+  updateSet,
+} from "@/app/actions/workout"
 import {
   cancelLocalSession,
   finishLocalSession,
@@ -55,7 +63,7 @@ export function SessionLogger({
   lastSetsByName,
   offlineKey,
 }: {
-  session: { id: number; status: string; startedAt: string }
+  session: { id: number; status: string; startedAt: string; notes?: string | null }
   workout: { id: number; title: string }
   cycle: { number: number; name: string }
   exercises: Exercise[]
@@ -195,12 +203,29 @@ export function SessionLogger({
                   return next
                 })
               }
+              onUpdated={(setId, weight, reps, rir) =>
+                setSets((prev) => {
+                  const next = prev.map((s) =>
+                    s.id === setId ? { ...s, weight, reps, rir } : s,
+                  )
+                  persistLocal(next)
+                  return next
+                })
+              }
               sessionRef={sessionRef}
               offline={Boolean(offlineKey)}
               onRest={(seconds, label) => setRest({ seconds, label })}
             />
           )
         })}
+
+        {!offlineKey && (
+          <SessionNotes
+            sessionId={session.id}
+            initialNotes={session.notes ?? null}
+            readOnly={readOnly}
+          />
+        )}
       </div>
 
       {!readOnly && (
@@ -251,6 +276,7 @@ function ExerciseCard({
   onLogged,
   onReplaceId,
   onDeleted,
+  onUpdated,
   sessionRef,
   offline,
   onRest,
@@ -264,10 +290,17 @@ function ExerciseCard({
   onLogged: (row: SetRow) => void
   onReplaceId: (tempId: number, realId: number) => void
   onDeleted: (setId: number) => void
+  onUpdated: (
+    setId: number,
+    weight: number | null,
+    reps: number | null,
+    rir: number | null,
+  ) => void
   sessionRef: number | string
   offline: boolean
   onRest: (seconds: number, label: string) => void
 }) {
+  const [editingId, setEditingId] = useState<number | null>(null)
   const prescribed = parsePrescribedWeight(exercise.weightText)
 
   // Рекомендация: сперва по подходам ТЕКУЩЕЙ сессии, иначе по прошлой тренировке
@@ -362,44 +395,80 @@ function ExerciseCard({
 
           {doneSets.length > 0 && (
             <ul className="mb-3 flex flex-col gap-1.5">
-              {doneSets.map((s, i) => (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between rounded-md bg-secondary px-3 py-2 text-sm"
-                >
-                  <span className="font-mono text-xs text-muted-foreground">
-                    #{i + 1}
-                  </span>
-                  <span className="font-medium">
-                    {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    RIR {s.rir ?? "—"}
-                  </span>
-                  {!readOnly && (
-                    <button
-                      type="button"
-                      className="text-muted-foreground hover:text-destructive"
-                      aria-label={`Удалить подход ${i + 1}`}
-                      onClick={() => {
-                        onDeleted(s.id)
-                        // временные id (< 0) ещё не существуют на сервере
+              {doneSets.map((s, i) =>
+                editingId === s.id ? (
+                  <li key={s.id} className="rounded-md border border-primary/50 bg-secondary px-3 py-2">
+                    <EditSetForm
+                      set={s}
+                      onCancel={() => setEditingId(null)}
+                      onSave={(weight, reps, rir) => {
+                        setEditingId(null)
+                        onUpdated(s.id, weight, reps, rir)
+                        // офлайн или временный id — только локально/в очередь
                         if (offline || s.id < 0) return
-                        deleteSet(s.id, typeof sessionRef === "number" ? sessionRef : 0).catch(
-                          (err) => {
-                            if (isOffline(err)) {
-                              pushOp({ kind: "deleteSet", setId: s.id })
-                            }
-                          },
-                        )
+                        updateSet({
+                          setId: s.id,
+                          sessionId: typeof sessionRef === "number" ? sessionRef : 0,
+                          weight,
+                          reps,
+                          rir,
+                        }).catch(() => {})
                       }}
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  )}
-                </li>
-              ))}
+                    />
+                  </li>
+                ) : (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-2 rounded-md bg-secondary px-3 py-2 text-sm"
+                  >
+                    <span className="font-mono text-xs text-muted-foreground">
+                      #{i + 1}
+                    </span>
+                    <span className="font-medium">
+                      {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      RIR {s.rir ?? "—"}
+                    </span>
+                    {!readOnly && (
+                      <span className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          className="flex size-7 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                          aria-label={`Редактировать подход ${i + 1}`}
+                          onClick={() => setEditingId(s.id)}
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className="flex size-7 items-center justify-center rounded text-muted-foreground hover:text-destructive"
+                          aria-label={`Удалить подход ${i + 1}`}
+                          onClick={() => {
+                            onDeleted(s.id)
+                            // временные id (< 0) ещё не существуют на сервере
+                            if (offline || s.id < 0) return
+                            deleteSet(s.id, typeof sessionRef === "number" ? sessionRef : 0).catch(
+                              (err) => {
+                                if (isOffline(err)) {
+                                  pushOp({ kind: "deleteSet", setId: s.id })
+                                }
+                              },
+                            )
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </span>
+                    )}
+                  </li>
+                ),
+              )}
             </ul>
+          )}
+
+          {hasTargets && !offline && (
+            <ExerciseHistory exerciseName={exercise.name} />
           )}
 
           {!readOnly && doneSets.length === 0 && hasTargets && (
@@ -593,6 +662,90 @@ function SetForm({
       <Button type="submit" disabled={saving} className="h-11 w-full">
         {saving ? "Сохраняю..." : "Записать подход"}
       </Button>
+    </form>
+  )
+}
+
+/** Инлайн-редактирование записанного подхода */
+function EditSetForm({
+  set,
+  onSave,
+  onCancel,
+}: {
+  set: SetRow
+  onSave: (weight: number | null, reps: number | null, rir: number | null) => void
+  onCancel: () => void
+}) {
+  const [weight, setWeight] = useState(set.weight != null ? String(set.weight) : "")
+  const [reps, setReps] = useState(set.reps != null ? String(set.reps) : "")
+  const [rir, setRir] = useState<number | null>(set.rir)
+
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const w = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null
+        const r = reps.trim() ? Number.parseInt(reps, 10) : null
+        onSave(
+          Number.isNaN(w as number) ? null : w,
+          Number.isNaN(r as number) ? null : r,
+          rir,
+        )
+      }}
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`edit-w-${set.id}`} className="text-xs text-muted-foreground">
+            Вес, кг
+          </label>
+          <input
+            id={`edit-w-${set.id}`}
+            inputMode="decimal"
+            value={weight}
+            onChange={(e) => setWeight(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-center text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`edit-r-${set.id}`} className="text-xs text-muted-foreground">
+            Повторения
+          </label>
+          <input
+            id={`edit-r-${set.id}`}
+            inputMode="numeric"
+            value={reps}
+            onChange={(e) => setReps(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-center text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+      </div>
+      <div className="flex gap-1" role="radiogroup" aria-label="RIR">
+        {[0, 1, 2, 3, 4, 5].map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="radio"
+            aria-checked={rir === v}
+            onClick={() => setRir(rir === v ? null : v)}
+            className={`h-8 flex-1 rounded-md border text-xs font-semibold transition-colors ${
+              rir === v
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border text-muted-foreground hover:bg-secondary"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" className="flex-1 bg-transparent" onClick={onCancel}>
+          Отмена
+        </Button>
+        <Button type="submit" size="sm" className="flex-[2]">
+          Сохранить
+        </Button>
+      </div>
     </form>
   )
 }

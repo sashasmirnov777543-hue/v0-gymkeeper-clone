@@ -84,6 +84,7 @@ export default async function SessionPage({
         id: session.id,
         status: session.status,
         startedAt: session.startedAt.toISOString(),
+        notes: session.notes,
       }}
       workout={{ id: workout.id, title: workout.title }}
       cycle={{ number: cycle?.number ?? 0, name: cycle?.name ?? "" }}
