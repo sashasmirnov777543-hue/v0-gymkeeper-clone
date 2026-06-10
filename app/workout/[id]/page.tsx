@@ -125,17 +125,11 @@ export default async function WorkoutPage({
 
       <div className="fixed inset-x-0 bottom-16 z-40">
         <div className="mx-auto max-w-lg px-4 pb-2">
-          <form action={startAction}>
-            <button
-              type="submit"
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-4 text-base font-bold text-primary-foreground shadow-lg transition-opacity hover:opacity-90"
-            >
-              <Play className="size-5" aria-hidden="true" />
-              {active.length > 0
-                ? "Продолжить тренировку"
-                : "Начать тренировку"}
-            </button>
-          </form>
+          <StartWorkoutButton
+            workoutId={workoutId}
+            hasActive={active.length > 0}
+            activeSessionId={active[0]?.id}
+          />
         </div>
       </div>
 

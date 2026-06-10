@@ -9,9 +9,11 @@ import { createLocalSession, findLocalSession } from "@/lib/offline"
 export function StartWorkoutButton({
   workoutId,
   hasActive,
+  activeSessionId,
 }: {
   workoutId: number
   hasActive: boolean
+  activeSessionId?: number
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
@@ -22,6 +24,11 @@ export function StartWorkoutButton({
     const localKey = findLocalSession(workoutId)
     if (localKey) {
       router.push(`/offline-session?key=${localKey}`)
+      return
+    }
+    // активная серверная сессия: просто переходим к ней
+    if (hasActive && activeSessionId != null) {
+      router.push(`/session/${activeSessionId}`)
       return
     }
     try {
