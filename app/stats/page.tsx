@@ -1,4 +1,5 @@
 import { asc, eq } from "drizzle-orm"
+import { Download } from "lucide-react"
 import { db } from "@/lib/db"
 import { loggedSets, sessions, workoutExercises } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
@@ -27,11 +28,21 @@ export default async function StatsPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col pb-24">
-      <header className="px-4 pb-2 pt-6">
-        <h1 className="text-xl font-bold">Статистика</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Прогресс по упражнениям: расчётный 1ПМ, лучший вес и тоннаж
-        </p>
+      <header className="flex items-start justify-between gap-3 px-4 pb-2 pt-6">
+        <div>
+          <h1 className="text-xl font-bold">Статистика</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Прогресс по упражнениям: расчётный 1ПМ, лучший вес и тоннаж
+          </p>
+        </div>
+        <a
+          href="/api/export"
+          download
+          className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <Download className="size-3.5" aria-hidden="true" />
+          CSV
+        </a>
       </header>
 
       <StatsView

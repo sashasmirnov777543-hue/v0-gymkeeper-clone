@@ -9,6 +9,7 @@ import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
 import { ExerciseHistory } from "@/components/exercise-history"
 import { HeartRateBadge } from "@/components/heart-rate"
 import { RestTimer } from "@/components/rest-timer"
+import { SessionNotes } from "@/components/session-notes"
 import { WarmupPlates } from "@/components/warmup-plates"
 import { useWakeLock } from "@/lib/heart-rate"
 import { unlockAudio } from "@/lib/sound"
@@ -62,7 +63,7 @@ export function SessionLogger({
   lastSetsByName,
   offlineKey,
 }: {
-  session: { id: number; status: string; startedAt: string }
+  session: { id: number; status: string; startedAt: string; notes?: string | null }
   workout: { id: number; title: string }
   cycle: { number: number; name: string }
   exercises: Exercise[]
@@ -217,6 +218,14 @@ export function SessionLogger({
             />
           )
         })}
+
+        {!offlineKey && (
+          <SessionNotes
+            sessionId={session.id}
+            initialNotes={session.notes ?? null}
+            readOnly={readOnly}
+          />
+        )}
       </div>
 
       {!readOnly && (
@@ -653,6 +662,90 @@ function SetForm({
       <Button type="submit" disabled={saving} className="h-11 w-full">
         {saving ? "Сохраняю..." : "Записать подход"}
       </Button>
+    </form>
+  )
+}
+
+/** Инлайн-редактирование записанного подхода */
+function EditSetForm({
+  set,
+  onSave,
+  onCancel,
+}: {
+  set: SetRow
+  onSave: (weight: number | null, reps: number | null, rir: number | null) => void
+  onCancel: () => void
+}) {
+  const [weight, setWeight] = useState(set.weight != null ? String(set.weight) : "")
+  const [reps, setReps] = useState(set.reps != null ? String(set.reps) : "")
+  const [rir, setRir] = useState<number | null>(set.rir)
+
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const w = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null
+        const r = reps.trim() ? Number.parseInt(reps, 10) : null
+        onSave(
+          Number.isNaN(w as number) ? null : w,
+          Number.isNaN(r as number) ? null : r,
+          rir,
+        )
+      }}
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`edit-w-${set.id}`} className="text-xs text-muted-foreground">
+            Вес, кг
+          </label>
+          <input
+            id={`edit-w-${set.id}`}
+            inputMode="decimal"
+            value={weight}
+            onChange={(e) => setWeight(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-center text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`edit-r-${set.id}`} className="text-xs text-muted-foreground">
+            Повторения
+          </label>
+          <input
+            id={`edit-r-${set.id}`}
+            inputMode="numeric"
+            value={reps}
+            onChange={(e) => setReps(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-center text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+      </div>
+      <div className="flex gap-1" role="radiogroup" aria-label="RIR">
+        {[0, 1, 2, 3, 4, 5].map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="radio"
+            aria-checked={rir === v}
+            onClick={() => setRir(rir === v ? null : v)}
+            className={`h-8 flex-1 rounded-md border text-xs font-semibold transition-colors ${
+              rir === v
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border text-muted-foreground hover:bg-secondary"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" className="flex-1 bg-transparent" onClick={onCancel}>
+          Отмена
+        </Button>
+        <Button type="submit" size="sm" className="flex-[2]">
+          Сохранить
+        </Button>
+      </div>
     </form>
   )
 }
