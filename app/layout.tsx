@@ -10,8 +10,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'Жимовой блок — трекер тренировок',
+  description:
+    'Персональная программа жима лёжа: 13 циклов, логирование подходов и автоподбор веса по RIR',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -38,7 +39,10 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html
+      lang="ru"
+      className={`bg-background ${geistSans.variable} ${geistMono.variable}`}
+    >
       <body className="font-sans antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

@@ -1,0 +1,69 @@
+import {
+  pgTable,
+  serial,
+  text,
+  integer,
+  numeric,
+  timestamp,
+} from "drizzle-orm/pg-core"
+
+export const cycles = pgTable("cycles", {
+  id: serial("id").primaryKey(),
+  number: integer("number").notNull(),
+  name: text("name").notNull(),
+  macrocycle: integer("macrocycle").notNull().default(1),
+  notes: text("notes"),
+  sortOrder: integer("sort_order").notNull().default(0),
+})
+
+export const workouts = pgTable("workouts", {
+  id: serial("id").primaryKey(),
+  cycleId: integer("cycle_id").notNull(),
+  label: text("label").notNull(),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  sortOrder: integer("sort_order").notNull().default(0),
+})
+
+export const workoutExercises = pgTable("workout_exercises", {
+  id: serial("id").primaryKey(),
+  workoutId: integer("workout_id").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  name: text("name").notNull(),
+  weightText: text("weight_text"),
+  pctOfTm: numeric("pct_of_tm"),
+  targetReps: text("target_reps"),
+  targetSets: text("target_sets"),
+  targetRirMin: integer("target_rir_min"),
+  targetRirMax: integer("target_rir_max"),
+  comment: text("comment"),
+})
+
+export const sessions = pgTable("sessions", {
+  id: serial("id").primaryKey(),
+  workoutId: integer("workout_id").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  status: text("status").notNull().default("active"),
+  notes: text("notes"),
+})
+
+export const loggedSets = pgTable("logged_sets", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull(),
+  workoutExerciseId: integer("workout_exercise_id").notNull(),
+  setNumber: integer("set_number").notNull(),
+  weight: numeric("weight"),
+  reps: integer("reps"),
+  rir: integer("rir"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+})
