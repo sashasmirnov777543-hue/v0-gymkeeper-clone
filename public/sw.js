@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэширование страниц и статики
-const CACHE = "gym-cache-v1"
+const CACHE = "gym-cache-v2"
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -69,6 +69,27 @@ self.addEventListener("fetch", (event) => {
           return Response.error()
         }),
       ),
+  )
+})
+
+// Серверный Web Push: приходит даже когда система заморозила приложение
+// при заблокированном экране (клиентские таймеры в этом случае не срабатывают).
+self.addEventListener("push", (event) => {
+  let data = {}
+  try {
+    data = event.data ? event.data.json() : {}
+  } catch {
+    // не JSON — покажем заголовок по умолчанию
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "Время! Следующий подход", {
+      body: data.body || "",
+      tag: data.tag || "gym-rest-timer",
+      renotify: true,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      vibrate: [300, 100, 300, 100, 500],
+    }),
   )
 })
 
