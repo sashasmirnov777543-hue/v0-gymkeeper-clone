@@ -1,10 +1,11 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Heart, Minus, Plus, X } from "lucide-react"
+import { Check, ChevronDown, Heart, Minus, Plus, TrendingDown, TrendingUp, X } from "lucide-react"
 import { useCountdown } from "@/lib/timers"
 import { useHeartRate } from "@/lib/heart-rate"
 import { hrBeep, startBeep, tickBeep, warnBeep } from "@/lib/sound"
+import type { Recommendation } from "@/lib/recommend"
 
 const HR_THRESHOLD_KEY = "gym:hr-rest-threshold"
 
@@ -15,23 +16,28 @@ function fmt(secs: number): string {
 }
 
 /**
- * Полноэкранный таймер отдыха между подходами.
+ * Таймер отдыха между подходами (полный экран или свёрнутый в плашку).
  * - звук + вибрация за 20 сек и в конце
  * - ручная коррекция ±15 сек
+ * - сворачивается в компактную плашку, чтобы видеть рекомендации и историю
+ * - показывает рекомендацию на следующий подход прямо на экране таймера
  * - «отдых по пульсу»: даёт сигнал, когда ЧСС опустилась ниже порога
  */
 export function RestTimer({
   seconds,
   label,
+  recommendation,
   onClose,
 }: {
   seconds: number
   label: string
+  recommendation?: Recommendation
   onClose: () => void
 }) {
   const hr = useHeartRate()
   const [hrMode, setHrMode] = useState(false)
   const [threshold, setThreshold] = useState(110)
+  const [minimized, setMinimized] = useState(false)
   const hrFiredRef = useRef(false)
 
   const { remaining, total, running, start, stop, adjust } = useCountdown({
@@ -59,21 +65,74 @@ export function RestTimer({
   const pct = total > 0 ? (remaining / total) * 100 : 0
   const hrReady = hrMode && hr.bpm != null && hr.bpm <= threshold
 
+  // свёрнутый режим: компактная плашка над нижней панелью, контент виден
+  if (minimized) {
+    return (
+      <button
+        type="button"
+        onClick={() => setMinimized(false)}
+        className="fixed bottom-20 right-4 z-50 flex items-center gap-3 rounded-full border border-border bg-card px-4 py-2.5 shadow-lg"
+        aria-label="Развернуть таймер отдыха"
+      >
+        <span
+          className={`font-mono text-lg font-bold tabular-nums ${
+            remaining === 0 ? "text-primary" : "text-foreground"
+          }`}
+        >
+          {fmt(remaining)}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {remaining === 0 ? "Время!" : "отдых"}
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation()
+            stop()
+            onClose()
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation()
+              stop()
+              onClose()
+            }
+          }}
+          className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
+          aria-label="Закрыть таймер"
+        >
+          <X className="size-4" />
+        </span>
+      </button>
+    )
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background/98 backdrop-blur-sm">
       <div className="flex items-center justify-between px-4 py-3">
         <span className="text-sm font-medium text-muted-foreground">{label}</span>
-        <button
-          type="button"
-          onClick={() => {
-            stop()
-            onClose()
-          }}
-          className="rounded-full p-2 text-muted-foreground hover:bg-secondary"
-          aria-label="Закрыть таймер"
-        >
-          <X className="size-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setMinimized(true)}
+            className="rounded-full p-2 text-muted-foreground hover:bg-secondary"
+            aria-label="Свернуть таймер"
+          >
+            <ChevronDown className="size-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              stop()
+              onClose()
+            }}
+            className="rounded-full p-2 text-muted-foreground hover:bg-secondary"
+            aria-label="Закрыть таймер"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
@@ -118,6 +177,33 @@ export function RestTimer({
             )}
           </div>
         </div>
+
+        {/* рекомендация на следующий подход — видна прямо на таймере */}
+        {recommendation && (
+          <div
+            className={`flex w-full max-w-xs items-center gap-2 rounded-xl border px-4 py-3 text-sm leading-relaxed ${
+              recommendation.direction === "up"
+                ? "border-success/40 bg-success/10 text-success"
+                : recommendation.direction === "down"
+                  ? "border-warning/40 bg-warning/10 text-warning"
+                  : "border-border bg-card text-foreground"
+            }`}
+          >
+            {recommendation.direction === "up" ? (
+              <TrendingUp className="size-4 shrink-0" />
+            ) : recommendation.direction === "down" ? (
+              <TrendingDown className="size-4 shrink-0" />
+            ) : (
+              <Check className="size-4 shrink-0" />
+            )}
+            <span>
+              Следующий подход:{" "}
+              <strong className="font-semibold">{recommendation.weight} кг</strong>
+              {" — "}
+              {recommendation.reason}
+            </span>
+          </div>
+        )}
 
         {/* ручная коррекция */}
         <div className="flex items-center gap-3">
