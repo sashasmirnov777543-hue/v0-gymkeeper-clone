@@ -66,6 +66,7 @@ export async function applyAmrapTmRecalc(
     .select({
       workoutId: sessions.workoutId,
       macrocycle: cycles.macrocycle,
+      block: cycles.block,
     })
     .from(sessions)
     .innerJoin(workouts, eq(sessions.workoutId, workouts.id))
@@ -74,7 +75,11 @@ export async function applyAmrapTmRecalc(
     .limit(1)
 
   if (sessionRows.length === 0) return null
-  const { macrocycle } = sessionRows[0]
+  const { macrocycle, block } = sessionRows[0]
+
+  // Автопересчёт ТМ — только для силового блока V9.
+  // В H2 тестовый AMRAP (цикл 9) имеет своё правило (×0,9) и задаёт стартовый ТМ V9 вручную.
+  if (block !== "v9") return null
 
   // AMRAP задаёт ТМ следующего макроцикла; после Макро 3 пересчитывать нечего
   const targetMacro = macrocycle + 1
@@ -133,7 +138,7 @@ export async function applyAmrapTmRecalc(
   const targetCycles = await db
     .select({ id: cycles.id })
     .from(cycles)
-    .where(eq(cycles.macrocycle, targetMacro))
+    .where(and(eq(cycles.macrocycle, targetMacro), eq(cycles.block, "v9")))
   const cycleIds = targetCycles.map((c) => c.id)
 
   let updatedExercises = 0

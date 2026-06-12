@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db"
 import {
+  appSettings,
   cycles,
   workouts,
   workoutExercises,
@@ -241,4 +242,16 @@ export async function getExerciseHistory(name: string, limit = 6) {
     .slice(0, limit)
     .reverse()
     .map((id) => bySession.get(id)!)
+}
+
+/** Переключение активного программного блока (V9 / H2) */
+export async function setActiveBlock(block: "v9" | "h2") {
+  await db
+    .insert(appSettings)
+    .values({ key: "active_block", value: block })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: block },
+    })
+  revalidatePath("/")
 }

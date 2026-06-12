@@ -3,15 +3,36 @@ import { asc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { appSettings, cycles, workouts, sessions } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
+import { BlockSwitcher } from "@/components/block-switcher"
 import { Bike, ChevronRight, Dumbbell, Flame } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
-const MACRO_TITLES: Record<number, string> = {
-  1: "Макроцикл 1 — Объёмная база + проход середины",
-  2: "Макроцикл 2 — Тяжёлые веса и кластеры",
-  3: "Макроцикл 3 — Реализация + пик",
+const MACRO_TITLES: Record<string, Record<number, string>> = {
+  v9: {
+    1: "Макроцикл 1 — Объёмная база + проход середины",
+    2: "Макроцикл 2 — Тяжёлые веса и кластеры",
+    3: "Макроцикл 3 — Реализация + пик",
+  },
+  h2: {
+    1: "Макро 1 — Накопление + разгрузка (циклы 1–5)",
+    2: "Макро 2 — Интенсификация (циклы 6–8)",
+    3: "Мост к V9 + тестовый AMRAP (цикл 9)",
+  },
 }
+
+const BLOCK_HEADER = {
+  v9: {
+    kicker: "Жимовой блок",
+    title: "13 циклов · цель 123–127 кг",
+    subtitle: "≈3,5 месяца · 2 тренировки со штангой в цикле",
+  },
+  h2: {
+    kicker: "Гипертрофия / ОФП — H2",
+    title: "9 циклов · база перед V9",
+    subtitle: "≈2,5 месяца · грудь 2×, растянутая позиция, кардио Z2",
+  },
+} as const
 
 export default async function HomePage() {
   const [allCycles, allWorkouts, settingsRows, activeSessions, doneSessions] =
@@ -24,7 +45,20 @@ export default async function HomePage() {
     ])
 
   const settings = Object.fromEntries(settingsRows.map((s) => [s.key, s.value]))
-  const currentCycle = Number.parseInt(settings.current_cycle ?? "1", 10)
+  const activeBlock = (settings.active_block === "h2" ? "h2" : "v9") as
+    | "v9"
+    | "h2"
+  const blockCycles = allCycles.filter(
+    (c) => (c.block ?? "v9") === activeBlock,
+  )
+  const blockCycleIds = new Set(blockCycles.map((c) => c.id))
+  const blockWorkouts = allWorkouts.filter((w) => blockCycleIds.has(w.cycleId))
+  const currentCycle = Number.parseInt(
+    (activeBlock === "h2"
+      ? settings.current_cycle_h2
+      : settings.current_cycle) ?? "1",
+    10,
+  )
   const tmByMacro: Record<number, string> = {
     1: settings.tm_macro1 ?? "110",
     2: settings.tm_macro2 ?? "113",
@@ -34,18 +68,20 @@ export default async function HomePage() {
 
   // --- трекер позиции в программе ---
   const completedWorkoutIds = new Set(doneSessions.map((s) => s.workoutId))
-  const totalWorkouts = allWorkouts.length
-  const doneCount = allWorkouts.filter((w) =>
+  const totalWorkouts = blockWorkouts.length
+  const doneCount = blockWorkouts.filter((w) =>
     completedWorkoutIds.has(w.id),
   ).length
 
   // идём по циклам начиная с текущего и ищем первую невыполненную тренировку
-  const orderedCycles = [...allCycles].sort((a, b) => a.sortOrder - b.sortOrder)
+  const orderedCycles = [...blockCycles].sort(
+    (a, b) => a.sortOrder - b.sortOrder,
+  )
   let nextWorkout: (typeof allWorkouts)[number] | null = null
   let nextCycle: (typeof allCycles)[number] | null = null
   for (const c of orderedCycles) {
     if (c.number < currentCycle) continue
-    const cwSorted = allWorkouts
+    const cwSorted = blockWorkouts
       .filter((w) => w.cycleId === c.id)
       .sort((a, b) => a.sortOrder - b.sortOrder)
     const pending = cwSorted.find((w) => !completedWorkoutIds.has(w.id))
@@ -58,22 +94,26 @@ export default async function HomePage() {
 
   const macros = [1, 2, 3].map((m) => ({
     macro: m,
-    cycles: allCycles.filter((c) => c.macrocycle === m),
+    cycles: blockCycles.filter((c) => c.macrocycle === m),
   }))
+  const header = BLOCK_HEADER[activeBlock]
 
   return (
     <div className="min-h-screen bg-background pb-20">
       <header className="border-b border-border bg-card">
         <div className="mx-auto max-w-lg px-4 py-5">
           <p className="font-mono text-xs uppercase tracking-widest text-primary">
-            Жимовой блок
+            {header.kicker}
           </p>
           <h1 className="mt-1 text-balance text-2xl font-bold tracking-tight">
-            13 циклов · цель 123–127 кг
+            {header.title}
           </h1>
           <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-            {"≈3,5 месяца · 2 тренировки со штангой в цикле"}
+            {header.subtitle}
           </p>
+          <div className="mt-3">
+            <BlockSwitcher active={activeBlock} />
+          </div>
         </div>
       </header>
 
@@ -151,11 +191,13 @@ export default async function HomePage() {
                   id={`macro-${macro}`}
                   className="text-pretty text-sm font-semibold text-muted-foreground"
                 >
-                  {MACRO_TITLES[macro]}
+                  {MACRO_TITLES[activeBlock][macro]}
                 </h2>
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                  ТМ {tmByMacro[macro]} кг
-                </span>
+                {activeBlock === "v9" && (
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    ТМ {tmByMacro[macro]} кг
+                  </span>
+                )}
               </div>
               <ul className="flex flex-col gap-2">
                 {mc.map((cycle) => {

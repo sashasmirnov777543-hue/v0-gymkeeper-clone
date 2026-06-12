@@ -14,6 +14,8 @@ export const cycles = pgTable("cycles", {
   macrocycle: integer("macrocycle").notNull().default(1),
   notes: text("notes"),
   sortOrder: integer("sort_order").notNull().default(0),
+  /** Программный блок: 'v9' — силовой жимовой, 'h2' — гипертрофия/ОФП (база перед V9) */
+  block: text("block").notNull().default("v9"),
 })
 
 export const workouts = pgTable("workouts", {
