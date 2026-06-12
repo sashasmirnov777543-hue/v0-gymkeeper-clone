@@ -72,12 +72,6 @@ export async function closeRestNotifications() {
 }
 
 /**
- * Запланировать уведомление на момент конца отдыха `endAtMs`.
- * Если в этот момент приложение открыто на экране — уведомление не показываем
- * (пользователь и так видит таймер и слышит сигнал).
- * Возвращает функцию отмены.
- */
-/**
  * Тестовое уведомление через `delayMs` — для проверки связки
  * телефон → часы. Показывается всегда, даже если приложение на экране.
  */
@@ -91,13 +85,21 @@ export function sendTestNotification(delayMs = 10_000): () => void {
   return () => window.clearTimeout(id)
 }
 
+/**
+ * Запланировать уведомление на момент конца отдыха `endAtMs`.
+ * Показываем всегда, без проверки видимости: на Android при заблокированном
+ * экране страница может по-прежнему числиться «видимой»
+ * (visibilityState === "visible"), из-за чего уведомления глушились.
+ * Лишнее уведомление при открытом приложении безвредно — оно заменяется
+ * по tag и закрывается при старте следующего отдыха.
+ * Возвращает функцию отмены.
+ */
 export function scheduleRestEndNotification(
   endAtMs: number,
   body: string,
 ): () => void {
   const delay = Math.max(0, endAtMs - Date.now())
   const id = window.setTimeout(() => {
-    if (document.visibilityState === "visible") return
     void show("Время! Следующий подход", body)
   }, delay)
   return () => window.clearTimeout(id)
