@@ -27,6 +27,7 @@ import {
   saveLocalSets,
 } from "@/lib/offline"
 import {
+  isPercentPrescribed,
   parsePrescribedWeight,
   recommendWeight,
   type LoggedSetLite,
@@ -78,7 +79,11 @@ export function SessionLogger({
     exercises.find((e) => e.weightText || e.targetReps)?.id ?? null,
   )
   const [isPending, startTransition] = useTransition()
-  const [rest, setRest] = useState<{ seconds: number; label: string } | null>(null)
+  const [rest, setRest] = useState<{
+    seconds: number
+    label: string
+    rec: Recommendation
+  } | null>(null)
   const readOnly = session.status !== "active"
 
   // экран не гаснет, пока тренировка активна
@@ -214,7 +219,7 @@ export function SessionLogger({
               }
               sessionRef={sessionRef}
               offline={Boolean(offlineKey)}
-              onRest={(seconds, label) => setRest({ seconds, label })}
+              onRest={(seconds, label, rec) => setRest({ seconds, label, rec })}
             />
           )
         })}
@@ -259,6 +264,7 @@ export function SessionLogger({
         <RestTimer
           seconds={rest.seconds}
           label={rest.label}
+          recommendation={rest.rec}
           onClose={() => setRest(null)}
         />
       )}
@@ -298,10 +304,12 @@ function ExerciseCard({
   ) => void
   sessionRef: number | string
   offline: boolean
-  onRest: (seconds: number, label: string) => void
+  onRest: (seconds: number, label: string, rec: Recommendation) => void
 }) {
   const [editingId, setEditingId] = useState<number | null>(null)
   const prescribed = parsePrescribedWeight(exercise.weightText)
+  // вес задан процентом от ТМ -> нагрузка фиксирована программой, вверх не гоним
+  const fixedLoad = isPercentPrescribed(exercise.weightText)
 
   // Рекомендация: сперва по подходам ТЕКУЩЕЙ сессии, иначе по прошлой тренировке
   const rec: Recommendation = useMemo(() => {
@@ -318,8 +326,9 @@ function ExerciseCard({
       exercise.targetRirMin,
       exercise.targetRirMax,
       prescribed,
+      { fixedLoad },
     )
-  }, [doneSets, lastTimeSets, exercise.targetRirMin, exercise.targetRirMax, prescribed])
+  }, [doneSets, lastTimeSets, exercise.targetRirMin, exercise.targetRirMax, prescribed, fixedLoad])
 
   const hasTargets = exercise.weightText || exercise.targetReps
 
@@ -495,7 +504,22 @@ function ExerciseCard({
 
                 // запускаем таймер отдыха для этого упражнения
                 if (exercise.restSeconds && exercise.restSeconds > 0) {
-                  onRest(exercise.restSeconds, `Отдых · ${exercise.name}`)
+                  // рекомендация на следующий подход с учётом только что записанного
+                  const nextRec = recommendWeight(
+                    [
+                      ...doneSets.map((s) => ({
+                        weight: s.weight,
+                        reps: s.reps,
+                        rir: s.rir,
+                      })),
+                      { weight, reps, rir },
+                    ],
+                    exercise.targetRirMin,
+                    exercise.targetRirMax,
+                    prescribed,
+                    { fixedLoad },
+                  )
+                  onRest(exercise.restSeconds, `Отдых · ${exercise.name}`, nextRec)
                 }
 
                 // офлайн-сессия: только очередь, без сервера
