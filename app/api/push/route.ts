@@ -26,6 +26,14 @@ function ensureTables(): Promise<void> {
         client_ts bigint NOT NULL
       )`,
     )
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS push_log (
+        id serial PRIMARY KEY,
+        at timestamptz NOT NULL DEFAULT now(),
+        event text NOT NULL,
+        detail text NOT NULL DEFAULT ''
+      )`,
+    )
   })()
   return initPromise
 }
@@ -55,10 +63,29 @@ async function getVapidKeys(): Promise<{ publicKey: string; privateKey: string }
   return keys
 }
 
-/** Публичный VAPID-ключ для подписки на клиенте. */
-export async function GET() {
+/** Публичный VAPID-ключ для подписки на клиенте. ?log=1 — журнал доставки. */
+export async function GET(req: Request) {
+  const url = new URL(req.url)
+  if (url.searchParams.get("log")) {
+    await ensureTables()
+    const r = await pool.query(
+      `SELECT at, event, detail FROM push_log ORDER BY id DESC LIMIT 30`,
+    )
+    return NextResponse.json({ events: r.rows })
+  }
   const { publicKey } = await getVapidKeys()
   return NextResponse.json({ publicKey })
+}
+
+async function log(event: string, detail = "") {
+  try {
+    await pool.query(`INSERT INTO push_log (event, detail) VALUES ($1, $2)`, [
+      event,
+      detail.slice(0, 500),
+    ])
+  } catch {
+    // журнал не должен ломать доставку
+  }
 }
 
 async function deliverAt(endpoint: string, endAt: number, clientTs: number) {
@@ -70,7 +97,10 @@ async function deliverAt(endpoint: string, endAt: number, clientTs: number) {
     [endpoint],
   )
   const row = r.rows[0]
-  if (!row || Number(row.client_ts) !== clientTs || Number(row.end_at) !== endAt) return
+  if (!row || Number(row.client_ts) !== clientTs || Number(row.end_at) !== endAt) {
+    await log("skip", `superseded or cancelled (endAt=${endAt})`)
+    return
+  }
   await pool.query(`DELETE FROM push_schedules WHERE endpoint = $1 AND client_ts = $2`, [
     endpoint,
     clientTs,
@@ -87,8 +117,9 @@ async function deliverAt(endpoint: string, endAt: number, clientTs: number) {
       }),
       { TTL: 120, urgency: "high" },
     )
-  } catch {
-    // подписка протухла или push-сервис недоступен — клиентский таймер подстрахует
+    await log("sent", `endAt=${endAt} body=${row.body}`)
+  } catch (e) {
+    await log("send_error", String(e))
   }
 }
 
@@ -122,6 +153,7 @@ export async function POST(req: Request) {
        WHERE endpoint = $1 AND client_ts < $2`,
       [data.endpoint, data.clientTs],
     )
+    await log("cancel", "")
     return NextResponse.json({ ok: true })
   }
 
@@ -147,6 +179,7 @@ export async function POST(req: Request) {
        WHERE push_schedules.client_ts < EXCLUDED.client_ts`,
       [subscription.endpoint, JSON.stringify(subscription), endAt, title ?? "", body, clientTs],
     )
+    await log("schedule", `in=${Math.round((endAt - Date.now()) / 1000)}s title=${title ?? ""} body=${body}`)
     // Доставка идёт в фоне после ответа клиенту.
     waitUntil(deliverAt(subscription.endpoint, endAt, clientTs))
     return NextResponse.json({ ok: true })
