@@ -108,7 +108,9 @@ export async function applyAmrapTmRecalc(
   }
   if (!best) return null
 
-  const newTm = roundHalf(best.e1rm)
+  // Правило ТМ из программы (§4): новый ТМ = 0,95 × e1RM —
+  // держит рабочие проценты честными, без завышения.
+  const newTm = roundHalf(0.95 * best.e1rm)
   const tmKey = `tm_macro${targetMacro}`
 
   // старый ТМ
