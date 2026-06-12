@@ -115,7 +115,9 @@ async function deliverAt(endpoint: string, endAt: number, clientTs: number) {
         body: row.body,
         tag: "gym-rest-timer",
       }),
-      { TTL: 120, urgency: "high" },
+      // TTL побольше: ColorOS может придерживать доставку для Chrome в дозе —
+      // пусть пуш дождётся «окна» доставки, а не выбрасывается через 2 минуты
+      { TTL: 1800, urgency: "high" },
     )
     await log("sent", `endAt=${endAt} body=${row.body}`)
   } catch (e) {
