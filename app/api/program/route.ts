@@ -24,6 +24,7 @@ export async function GET() {
     number: c.number,
     name: c.name,
     macrocycle: c.macrocycle,
+    block: c.block,
     notes: c.notes,
     workouts: allWorkouts
       .filter((w) => w.cycleId === c.id)
