@@ -77,6 +77,20 @@ export async function closeRestNotifications() {
  * (пользователь и так видит таймер и слышит сигнал).
  * Возвращает функцию отмены.
  */
+/**
+ * Тестовое уведомление через `delayMs` — для проверки связки
+ * телефон → часы. Показывается всегда, даже если приложение на экране.
+ */
+export function sendTestNotification(delayMs = 10_000): () => void {
+  const id = window.setTimeout(() => {
+    void show(
+      "Тест уведомлений",
+      "Если видишь это на часах — зеркалирование работает.",
+    )
+  }, delayMs)
+  return () => window.clearTimeout(id)
+}
+
 export function scheduleRestEndNotification(
   endAtMs: number,
   body: string,

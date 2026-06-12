@@ -12,6 +12,7 @@ import {
   getRestNotifySetting,
   notificationsSupported,
   scheduleRestEndNotification,
+  sendTestNotification,
   setRestNotifySetting,
 } from "@/lib/notifications"
 
@@ -47,6 +48,7 @@ export function RestTimer({
   const [threshold, setThreshold] = useState(110)
   const [minimized, setMinimized] = useState(false)
   const [notify, setNotify] = useState(false)
+  const [testPending, setTestPending] = useState(false)
   const hrFiredRef = useRef(false)
 
   const { remaining, total, running, endAt, start, stop, adjust } = useCountdown({
@@ -289,6 +291,28 @@ export function RestTimer({
               className="size-5 accent-primary"
             />
           </label>
+        )}
+
+        {/* тест связки телефон → часы */}
+        {notify && (
+          <button
+            type="button"
+            onClick={async () => {
+              if (!(await ensureNotificationPermission())) {
+                alert("Уведомления запрещены — разреши их в настройках Chrome.")
+                return
+              }
+              sendTestNotification(10_000)
+              setTestPending(true)
+              window.setTimeout(() => setTestPending(false), 12_000)
+            }}
+            disabled={testPending}
+            className="w-full max-w-xs rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-muted-foreground active:scale-95 disabled:opacity-60"
+          >
+            {testPending
+              ? "Заблокируй телефон — уведомление через 10 сек…"
+              : "Тест: проверить уведомление на часах"}
+          </button>
         )}
 
         {/* отдых по пульсу */}
