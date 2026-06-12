@@ -71,3 +71,18 @@ self.addEventListener("fetch", (event) => {
       ),
   )
 })
+
+// Тап по уведомлению (например, "Время! Следующий подход") — открыть приложение
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close()
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((list) => {
+        for (const client of list) {
+          if ("focus" in client) return client.focus()
+        }
+        return self.clients.openWindow("/")
+      }),
+  )
+})

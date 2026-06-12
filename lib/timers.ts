@@ -15,6 +15,8 @@ export function useCountdown(opts: {
   const [remaining, setRemaining] = useState(0)
   const [total, setTotal] = useState(0)
   const [running, setRunning] = useState(false)
+  // абсолютное время конца (мс) — нужно для планирования уведомлений
+  const [endAt, setEndAt] = useState(0)
   const endRef = useRef<number>(0)
   const warnedRef = useRef(false)
   const rafRef = useRef<number | null>(null)
@@ -40,6 +42,7 @@ export function useCountdown(opts: {
     (seconds: number) => {
       if (seconds <= 0) return
       endRef.current = Date.now() + seconds * 1000
+      setEndAt(endRef.current)
       warnedRef.current = seconds <= warnAt
       setTotal(seconds)
       setRemaining(seconds)
@@ -58,6 +61,7 @@ export function useCountdown(opts: {
 
   const adjust = useCallback((deltaSeconds: number) => {
     endRef.current += deltaSeconds * 1000
+    setEndAt(endRef.current)
     const secs = Math.max(0, Math.ceil((endRef.current - Date.now()) / 1000))
     setRemaining(secs)
     setTotal((t) => Math.max(secs, t + deltaSeconds))
@@ -69,5 +73,5 @@ export function useCountdown(opts: {
     }
   }, [])
 
-  return { remaining, total, running, start, stop, adjust }
+  return { remaining, total, running, endAt, start, stop, adjust }
 }
