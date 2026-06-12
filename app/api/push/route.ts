@@ -115,7 +115,7 @@ async function deliverAt(endpoint: string, endAt: number, clientTs: number) {
         body: row.body,
         tag: "gym-rest-timer",
       }),
-      // TTL побольше (деплой через PR): ColorOS может придерживать доставку для Chrome в дозе —
+      // TTL побольше (деплой через PR, v2): ColorOS может придерживать доставку для Chrome в дозе —
       // пусть пуш дождётся «окна» доставки, а не выбрасывается через 2 минуты
       { TTL: 1800, urgency: "high" },
     )
