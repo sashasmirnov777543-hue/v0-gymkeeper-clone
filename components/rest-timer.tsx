@@ -1,11 +1,19 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Check, ChevronDown, Heart, Minus, Plus, TrendingDown, TrendingUp, X } from "lucide-react"
+import { Bell, Check, ChevronDown, Heart, Minus, Plus, TrendingDown, TrendingUp, X } from "lucide-react"
 import { useCountdown } from "@/lib/timers"
 import { useHeartRate } from "@/lib/heart-rate"
 import { hrBeep, startBeep, tickBeep, warnBeep } from "@/lib/sound"
 import type { Recommendation } from "@/lib/recommend"
+import {
+  closeRestNotifications,
+  ensureNotificationPermission,
+  getRestNotifySetting,
+  notificationsSupported,
+  scheduleRestEndNotification,
+  setRestNotifySetting,
+} from "@/lib/notifications"
 
 const HR_THRESHOLD_KEY = "gym:hr-rest-threshold"
 
@@ -38,9 +46,10 @@ export function RestTimer({
   const [hrMode, setHrMode] = useState(false)
   const [threshold, setThreshold] = useState(110)
   const [minimized, setMinimized] = useState(false)
+  const [notify, setNotify] = useState(false)
   const hrFiredRef = useRef(false)
 
-  const { remaining, total, running, start, stop, adjust } = useCountdown({
+  const { remaining, total, running, endAt, start, stop, adjust } = useCountdown({
     warnAt: 20,
     onWarn: warnBeep,
     onDone: startBeep,
@@ -49,9 +58,26 @@ export function RestTimer({
   useEffect(() => {
     const saved = Number(localStorage.getItem(HR_THRESHOLD_KEY))
     if (saved > 0) setThreshold(saved)
+    setNotify(
+      getRestNotifySetting() &&
+        notificationsSupported() &&
+        Notification.permission === "granted",
+    )
+    // новый отдых — убираем уведомление от предыдущего
+    closeRestNotifications()
     start(seconds)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // уведомление в конце отдыха (телефон + зеркало на часы);
+  // перепланируется при коррекции ±15 сек, отменяется при закрытии таймера
+  useEffect(() => {
+    if (!notify || !endAt || endAt <= Date.now()) return
+    const body = recommendation
+      ? `${label}: ${recommendation.weight} кг — ${recommendation.reason}`
+      : label
+    return scheduleRestEndNotification(endAt, body)
+  }, [notify, endAt, recommendation, label])
 
   // отдых по пульсу: как только ЧСС <= порога — сигнал «можно начинать»
   useEffect(() => {
@@ -231,6 +257,39 @@ export function RestTimer({
             <Plus className="size-5" />
           </button>
         </div>
+
+        {/* уведомление на телефон/часы в конце отдыха */}
+        {notificationsSupported() && (
+          <label className="flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border border-border bg-card px-4 py-3">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <Bell
+                className={`size-4 ${notify ? "text-primary" : "text-muted-foreground"}`}
+              />
+              Уведомление на часы
+            </span>
+            <input
+              type="checkbox"
+              checked={notify}
+              onChange={async (e) => {
+                const on = e.target.checked
+                if (on) {
+                  const ok = await ensureNotificationPermission()
+                  setNotify(ok)
+                  setRestNotifySetting(ok)
+                  if (!ok) {
+                    alert(
+                      "Уведомления запрещены для приложения. Разреши их в настройках браузера/системы и включи синхронизацию уведомлений в Huawei Health (или приложении твоих часов).",
+                    )
+                  }
+                } else {
+                  setNotify(false)
+                  setRestNotifySetting(false)
+                }
+              }}
+              className="size-5 accent-primary"
+            />
+          </label>
+        )}
 
         {/* отдых по пульсу */}
         {hr.status === "connected" && (
