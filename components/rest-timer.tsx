@@ -10,6 +10,7 @@ import {
   closeRestNotifications,
   ensureNotificationPermission,
   getRestNotifySetting,
+  ensurePushReady,
   notificationsSupported,
   scheduleRestEndNotification,
   sendTestNotification,
@@ -278,6 +279,7 @@ export function RestTimer({
                   const ok = await ensureNotificationPermission()
                   setNotify(ok)
                   setRestNotifySetting(ok)
+                  if (ok) void ensurePushReady()
                   if (!ok) {
                     alert(
                       "Уведомления запрещены для приложения. Разреши их в настройках браузера/системы и включи синхронизацию уведомлений в Huawei Health (или приложении твоих часов).",

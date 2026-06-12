@@ -73,34 +73,153 @@ export async function closeRestNotifications() {
 
 /**
  * Тестовое уведомление через `delayMs` — для проверки связки
- * телефон → часы. Показывается всегда, даже если приложение на экране.
+ * телефон → часы. Идёт через серверный Web Push (тот же канал, что и
+ * боевое уведомление таймера); локальный таймер — запасной вариант.
  */
 export function sendTestNotification(delayMs = 10_000): () => void {
-  const id = window.setTimeout(() => {
-    void show(
-      "Тест уведомлений",
-      "Если видишь это на часах — зеркалирование работает.",
-    )
+  const endAt = Date.now() + delayMs
+  const title = "Тест уведомлений"
+  const body = "Если видишь это на часах — всё работает."
+  let cancelled = false
+  let localId: number | null = window.setTimeout(() => {
+    void show(title, body)
   }, delayMs)
-  return () => window.clearTimeout(id)
+
+  void (async () => {
+    const sub = await getPushSubscription()
+    if (!sub || cancelled) return
+    try {
+      const res = await fetch("/api/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "schedule",
+          subscription: sub.toJSON(),
+          endAt,
+          title,
+          body,
+          clientTs: Date.now(),
+        }),
+      })
+      if (res.ok && !cancelled && localId !== null) {
+        window.clearTimeout(localId)
+        localId = null
+      }
+    } catch {
+      // остаёмся на локальном таймере
+    }
+  })()
+
+  return () => {
+    cancelled = true
+    if (localId !== null) window.clearTimeout(localId)
+  }
+}
+
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4)
+  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/")
+  const raw = atob(b64)
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)))
+}
+
+/** Подписка на серверный Web Push (создаётся один раз, дальше переиспользуется). */
+async function getPushSubscription(): Promise<PushSubscription | null> {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration()
+    if (!reg?.pushManager) return null
+    const existing = await reg.pushManager.getSubscription()
+    if (existing) return existing
+    const res = await fetch("/api/push")
+    if (!res.ok) return null
+    const { publicKey } = (await res.json()) as { publicKey?: string }
+    if (!publicKey) return null
+    return await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
+    })
+  } catch {
+    return null
+  }
+}
+
+/** Заранее создать push-подписку (вызывать при включении тумблера). */
+export async function ensurePushReady(): Promise<void> {
+  await getPushSubscription()
+}
+
+async function cancelServerPush(endpoint: string) {
+  try {
+    await fetch("/api/push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "cancel", endpoint, clientTs: Date.now() }),
+    })
+  } catch {
+    // не страшно: новое расписание всё равно перетрёт старое
+  }
 }
 
 /**
  * Запланировать уведомление на момент конца отдыха `endAtMs`.
- * Показываем всегда, без проверки видимости: на Android при заблокированном
- * экране страница может по-прежнему числиться «видимой»
- * (visibilityState === "visible"), из-за чего уведомления глушились.
- * Лишнее уведомление при открытом приложении безвредно — оно заменяется
- * по tag и закрывается при старте следующего отдыха.
- * Возвращает функцию отмены.
+ * Основной путь — серверный Web Push: он доходит, даже когда система
+ * заморозила приложение при заблокированном экране (клиентский setTimeout
+ * в этом случае не срабатывает). Локальный таймер остаётся запасным
+ * вариантом на случай, если подписаться/связаться с сервером не удалось
+ * (например, нет сети). Возвращает функцию отмены.
  */
 export function scheduleRestEndNotification(
   endAtMs: number,
   body: string,
 ): () => void {
-  const delay = Math.max(0, endAtMs - Date.now())
-  const id = window.setTimeout(() => {
-    void show("Время! Следующий подход", body)
-  }, delay)
-  return () => window.clearTimeout(id)
+  let cancelled = false
+  let endpoint: string | null = null
+  let localId: number | null = window.setTimeout(
+    () => {
+      void show("Время! Следующий подход", body)
+    },
+    Math.max(0, endAtMs - Date.now()),
+  )
+
+  void (async () => {
+    const sub = await getPushSubscription()
+    if (!sub) return
+    endpoint = sub.endpoint
+    if (cancelled) return
+    try {
+      const res = await fetch("/api/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "schedule",
+          subscription: sub.toJSON(),
+          endAt: endAtMs,
+          body,
+          clientTs: Date.now(),
+        }),
+      })
+      if (!res.ok) return
+      if (cancelled) {
+        // отменили, пока договаривались с сервером — гасим и там
+        void cancelServerPush(endpoint)
+        return
+      }
+      // сервер доставит пуш — локальный дубль больше не нужен
+      if (localId !== null) {
+        window.clearTimeout(localId)
+        localId = null
+      }
+    } catch {
+      // остаёмся на локальном таймере
+    }
+  })()
+
+  return () => {
+    cancelled = true
+    if (localId !== null) {
+      window.clearTimeout(localId)
+      localId = null
+    }
+    if (endpoint) void cancelServerPush(endpoint)
+  }
 }
