@@ -2,3 +2,4 @@ Deploy trigger for production build (feature: "Прошлая тренировк
 Authored by project owner to satisfy Vercel Hobby commit-author check.
 2026-06-27
 redeploy 2
+redeploy 3 — repo made public, re-trigger git deploy (PR #13 merged: SW cache v3)
