@@ -54,6 +54,7 @@ export function CardioSession({
 
   const [elapsed, setElapsed] = useState(0)
   const [running, setRunning] = useState(true)
+  const [finishing, setFinishing] = useState(false)
   const [maxHr, setMaxHr] = useState(185)
   const startedAtRef = useRef<number>(Date.now())
   const lastZoneWarnRef = useRef<number>(0)
@@ -91,6 +92,8 @@ export function CardioSession({
     currentZone === targetZone || (targetZone === "Z1" && currentZone === "Z2")
 
   const handleFinish = async () => {
+    if (finishing) return
+    setFinishing(true)
     setRunning(false)
     const avg = averageBpmSince(startedAtRef.current)
     try {
@@ -221,6 +224,7 @@ export function CardioSession({
             <Button
               variant="outline"
               className="flex-1 bg-transparent"
+              disabled={finishing}
               onClick={() => {
                 unlockAudio()
                 setRunning((r) => !r)
@@ -236,9 +240,9 @@ export function CardioSession({
                 </>
               )}
             </Button>
-            <Button className="flex-[2]" onClick={handleFinish}>
+            <Button className="flex-[2]" onClick={handleFinish} disabled={finishing}>
               <Square className="size-4" />
-              Завершить кардио
+              {finishing ? "Завершаю…" : "Завершить кардио"}
             </Button>
           </div>
         </div>
