@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server"
 import { asc } from "drizzle-orm"
 import { db } from "@/lib/db"
+import { ensureSchema } from "@/lib/db/migrate"
 import { cycles, workoutExercises, workouts } from "@/lib/db/schema"
 import { getLastSetsByExerciseNames } from "@/app/actions/workout"
 
 export const dynamic = "force-dynamic"
 
 export async function GET() {
+  await ensureSchema()
+
   const [allCycles, allWorkouts, allExercises] = await Promise.all([
     db.select().from(cycles).orderBy(asc(cycles.sortOrder)),
     db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
@@ -44,6 +47,7 @@ export async function GET() {
             workoutId: e.workoutId,
             name: e.name,
             weightText: e.weightText,
+            tempo: e.tempo,
             targetReps: e.targetReps,
             targetSets: e.targetSets,
             targetRirMin: e.targetRirMin,

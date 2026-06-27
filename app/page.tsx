@@ -48,9 +48,7 @@ export default async function HomePage() {
   const activeBlock = (settings.active_block === "h2" ? "h2" : "v9") as
     | "v9"
     | "h2"
-  const blockCycles = allCycles.filter(
-    (c) => (c.block ?? "v9") === activeBlock,
-  )
+  const blockCycles = allCycles.filter((c) => (c.block ?? "v9") === activeBlock)
   const blockCycleIds = new Set(blockCycles.map((c) => c.id))
   const blockWorkouts = allWorkouts.filter((w) => blockCycleIds.has(w.cycleId))
   const currentCycle = Number.parseInt(
@@ -65,18 +63,32 @@ export default async function HomePage() {
     3: settings.tm_macro3 ?? "116",
   }
   const activeWorkoutIds = new Set(activeSessions.map((s) => s.workoutId))
-
-  // --- трекер позиции в программе ---
   const completedWorkoutIds = new Set(doneSessions.map((s) => s.workoutId))
   const totalWorkouts = blockWorkouts.length
   const doneCount = blockWorkouts.filter((w) =>
     completedWorkoutIds.has(w.id),
   ).length
 
-  // идём по циклам начиная с текущего и ищем первую невыполненную тренировку
-  const orderedCycles = [...blockCycles].sort(
-    (a, b) => a.sortOrder - b.sortOrder,
-  )
+  const orderedCycles = [...blockCycles].sort((a, b) => a.sortOrder - b.sortOrder)
+
+  // Сквозная нумерация С/К по всему блоку (С1…С13, К1…)
+  const labelByWorkoutId = new Map<
+    number,
+    { label: string; isCardio: boolean }
+  >()
+  let sCount = 0
+  let kCount = 0
+  for (const c of orderedCycles) {
+    const cw = blockWorkouts
+      .filter((w) => w.cycleId === c.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+    for (const w of cw) {
+      const isCardio = w.kind === "cardio"
+      const label = isCardio ? `К${++kCount}` : `С${++sCount}`
+      labelByWorkoutId.set(w.id, { label, isCardio })
+    }
+  }
+
   let nextWorkout: (typeof allWorkouts)[number] | null = null
   let nextCycle: (typeof allCycles)[number] | null = null
   for (const c of orderedCycles) {
@@ -94,7 +106,7 @@ export default async function HomePage() {
 
   const macros = [1, 2, 3].map((m) => ({
     macro: m,
-    cycles: blockCycles.filter((c) => c.macrocycle === m),
+    cycles: orderedCycles.filter((c) => c.macrocycle === m),
   }))
   const header = BLOCK_HEADER[activeBlock]
 
@@ -176,110 +188,82 @@ export default async function HomePage() {
           >
             <div
               className="h-full rounded-full bg-primary transition-all"
-              style={{
-                width: `${totalWorkouts > 0 ? (doneCount / totalWorkouts) * 100 : 0}%`,
-              }}
+              style={{ width: `${totalWorkouts > 0 ? (doneCount / totalWorkouts) * 100 : 0}%` }}
             />
           </div>
         </div>
 
         <div className="flex flex-col gap-6">
-          {macros.map(({ macro, cycles: mc }) => (
-            <section key={macro} aria-labelledby={`macro-${macro}`}>
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <h2
-                  id={`macro-${macro}`}
-                  className="text-pretty text-sm font-semibold text-muted-foreground"
-                >
-                  {MACRO_TITLES[activeBlock][macro]}
-                </h2>
-                {activeBlock === "v9" && (
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    ТМ {tmByMacro[macro]} кг
-                  </span>
-                )}
-              </div>
-              <ul className="flex flex-col gap-2">
-                {mc.map((cycle) => {
-                  const cw = allWorkouts.filter((w) => w.cycleId === cycle.id)
-                  const isCurrent = cycle.number === currentCycle
-                  const hasActive = cw.some((w) => activeWorkoutIds.has(w.id))
-                  return (
-                    <li key={cycle.id}>
-                      <div
-                        className={`rounded-lg border ${
-                          isCurrent
-                            ? "border-primary/60 bg-card"
-                            : "border-border bg-card"
-                        }`}
+          {macros.map(({ macro, cycles: mc }) => {
+            const macroItems = mc.flatMap((c) =>
+              blockWorkouts
+                .filter((w) => w.cycleId === c.id)
+                .sort((a, b) => a.sortOrder - b.sortOrder)
+                .map((w) => ({ w, cycle: c })),
+            )
+            if (macroItems.length === 0) return null
+            return (
+              <section key={macro} aria-labelledby={`macro-${macro}`}>
+                <div className="mb-2 flex items-baseline justify-between gap-2">
+                  <h2
+                    id={`macro-${macro}`}
+                    className="text-pretty text-sm font-semibold text-muted-foreground"
+                  >
+                    {MACRO_TITLES[activeBlock][macro]}
+                  </h2>
+                  {activeBlock === "v9" && (
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      ТМ {tmByMacro[macro]} кг
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-5 gap-2 sm:grid-cols-6">
+                  {macroItems.map(({ w, cycle }) => {
+                    const meta = labelByWorkoutId.get(w.id)
+                    const label = meta?.label ?? "?"
+                    const isCardio = meta?.isCardio ?? w.kind === "cardio"
+                    const done = completedWorkoutIds.has(w.id)
+                    const active = activeWorkoutIds.has(w.id)
+                    const isNext = nextWorkout?.id === w.id
+                    const cls = active
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : done
+                        ? "border-border bg-secondary/40 text-muted-foreground"
+                        : isNext
+                          ? "border-primary bg-card text-foreground ring-2 ring-primary"
+                          : isCardio
+                            ? "border-border bg-secondary/50 text-muted-foreground"
+                            : "border-border bg-secondary text-secondary-foreground"
+                    return (
+                      <Link
+                        key={w.id}
+                        href={`/workout/${w.id}`}
+                        title={`Цикл ${cycle.number} · ${cycle.name}`}
+                        aria-label={`${isCardio ? "Кардио" : "Силовая"} ${label}${done ? ", выполнена" : ""}, цикл ${cycle.number}`}
+                        className={`relative flex aspect-square items-center justify-center rounded-lg border text-sm font-bold transition-colors ${cls}`}
                       >
-                        <div className="flex items-center justify-between px-4 pt-3">
-                          <p className="font-semibold">
-                            <span className="font-mono text-primary">
-                              {cycle.number}
-                            </span>
-                            {" · "}
-                            {cycle.name}
-                          </p>
-                          {isCurrent && (
-                            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                              Текущий
-                            </span>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 px-4 pb-3 pt-2">
-                          {cw.map((w) => {
-                            const isCardio = w.kind === "cardio"
-                            const active = activeWorkoutIds.has(w.id)
-                            return (
-                              <Link
-                                key={w.id}
-                                href={`/workout/${w.id}`}
-                                className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                                  active
-                                    ? "bg-primary text-primary-foreground"
-                                    : isCardio
-                                      ? "bg-secondary/60 text-muted-foreground hover:bg-secondary"
-                                      : "bg-secondary text-secondary-foreground hover:bg-secondary/70"
-                                }`}
-                              >
-                                {isCardio ? (
-                                  <Bike className="size-4 shrink-0 opacity-70" aria-hidden="true" />
-                                ) : (
-                                  <Dumbbell className="size-4 shrink-0 opacity-70" aria-hidden="true" />
-                                )}
-                                <span className="min-w-0 flex-1 truncate">
-                                  {w.label === "A"
-                                    ? "Тр. A"
-                                    : w.label === "B"
-                                      ? "Тр. B"
-                                      : w.label === "B1"
-                                        ? `Кардио ${w.cardioMinutes ?? ""}`
-                                        : w.label === "B3"
-                                          ? "Кардио кор."
-                                          : w.label}
-                                </span>
-                                <ChevronRight
-                                  className="size-4 shrink-0 opacity-60"
-                                  aria-hidden="true"
-                                />
-                              </Link>
-                            )
-                          })}
-                        </div>
-                        {hasActive && (
-                          <p className="px-4 pb-3 text-xs text-primary">
-                            Есть незавершённая се��сия
-                          </p>
+                        <span
+                          className={`font-mono ${done ? "line-through decoration-2" : ""}`}
+                        >
+                          {label}
+                        </span>
+                        {active && (
+                          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary-foreground" />
                         )}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          ))}
+                      </Link>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
         </div>
+
+        <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+          <span className="font-mono font-semibold text-foreground">С</span> — силовая ·{" "}
+          <span className="font-mono font-semibold text-foreground">К</span> — кардио ·{" "}
+          <span className="line-through decoration-2">зачёркнут</span> — выполнена
+        </p>
       </main>
 
       <BottomNav />

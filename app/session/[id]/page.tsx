@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { asc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
+import { ensureSchema } from "@/lib/db/migrate"
 import {
   cycles,
   loggedSets,
@@ -22,6 +23,8 @@ export default async function SessionPage({
   const { id } = await params
   const sessionId = Number.parseInt(id, 10)
   if (Number.isNaN(sessionId)) notFound()
+
+  await ensureSchema()
 
   const [session] = await db
     .select()
@@ -45,17 +48,9 @@ export default async function SessionPage({
   if (workout.kind === "cardio") {
     return (
       <CardioSession
-        session={{ id: session.id, status: session.status }}
-        workout={{
-          id: workout.id,
-          title: workout.title,
-          cardioZone: workout.cardioZone,
-          cardioMinutes: workout.cardioMinutes,
-        }}
-        cycle={{
-          number: cardioCycleRow?.number ?? 0,
-          name: cardioCycleRow?.name ?? "",
-        }}
+        session= id: session.id, status: session.status, startedAt: session.startedAt.toISOString() 
+        workout= id: workout.id, title: workout.title, cardioZone: workout.cardioZone, cardioMinutes: workout.cardioMinutes 
+        cycle= number: cardioCycleRow?.number ?? 0, name: cardioCycleRow?.name ?? "" 
       />
     )
   }
@@ -80,18 +75,14 @@ export default async function SessionPage({
 
   return (
     <SessionLogger
-      session={{
-        id: session.id,
-        status: session.status,
-        startedAt: session.startedAt.toISOString(),
-        notes: session.notes,
-      }}
-      workout={{ id: workout.id, title: workout.title }}
-      cycle={{ number: cycle?.number ?? 0, name: cycle?.name ?? "" }}
+      session= id: session.id, status: session.status, startedAt: session.startedAt.toISOString(), notes: session.notes 
+      workout= id: workout.id, title: workout.title 
+      cycle= number: cycle?.number ?? 0, name: cycle?.name ?? "" 
       exercises={exercises.map((e) => ({
         id: e.id,
         name: e.name,
         weightText: e.weightText,
+        tempo: e.tempo,
         targetReps: e.targetReps,
         targetSets: e.targetSets,
         targetRirMin: e.targetRirMin,

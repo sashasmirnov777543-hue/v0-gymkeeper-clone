@@ -2,18 +2,40 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import { and, asc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
+import { ensureSchema } from "@/lib/db/migrate"
 import {
   cycles,
   sessions,
   workoutExercises,
   workouts,
 } from "@/lib/db/schema"
+import { getLastSetsByExerciseNames } from "@/app/actions/workout"
 import { BottomNav } from "@/components/bottom-nav"
 import { StartWorkoutButton } from "@/components/start-workout-button"
 import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
-import { ArrowLeft, Bike, Heart, Timer } from "lucide-react"
+import { ArrowLeft, Bike, Heart, History, Timer } from "lucide-react"
 
 export const dynamic = "force-dynamic"
+
+function fmtRest(sec: number): string {
+  if (sec < 60) return `${sec} с`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s ? `${m} мин ${s} с` : `${m} мин`
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <span className="text-pretty font-mono text-sm font-semibold text-foreground">
+        {value}
+      </span>
+    </div>
+  )
+}
 
 export default async function WorkoutPage({
   params,
@@ -23,6 +45,8 @@ export default async function WorkoutPage({
   const { id } = await params
   const workoutId = Number.parseInt(id, 10)
   if (Number.isNaN(workoutId)) notFound()
+
+  await ensureSchema()
 
   const [workout] = await db
     .select()
@@ -46,6 +70,14 @@ export default async function WorkoutPage({
       )
       .limit(1),
   ])
+
+  const lastByName =
+    workout.kind !== "cardio" && exercises.length > 0
+      ? await getLastSetsByExerciseNames(exercises.map((e) => e.name))
+      : {}
+  const first = exercises[0]
+  const firstLast = first ? lastByName[first.name] ?? [] : []
+  const restExercises = exercises.slice(1)
 
   return (
     <div className="min-h-screen bg-background pb-32">
@@ -110,62 +142,138 @@ export default async function WorkoutPage({
             )}
           </div>
         ) : (
-        <>
-        <ul className="flex flex-col gap-2">
-          {exercises.map((ex, i) => (
-            <li
-              key={ex.id}
-              className="rounded-lg border border-border bg-card px-4 py-3"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1">
-                    <p className="font-medium leading-snug">
-                      <span className="font-mono text-sm text-muted-foreground">
-                        {i + 1}.{" "}
-                      </span>
-                      {ex.name}
-                    </p>
-                    <ExerciseGuideButton exerciseName={ex.name} />
+          <div className="flex flex-col gap-4">
+            {first ? (
+              <section className="overflow-hidden rounded-xl border border-border bg-card">
+                <div className="border-b border-border px-4 py-4">
+                  <p className="font-mono text-xs uppercase tracking-widest text-primary">
+                    Упражнение 1 из {exercises.length}
+                  </p>
+                  <div className="mt-1 flex items-start gap-2">
+                    <h2 className="min-w-0 flex-1 text-balance text-2xl font-bold leading-tight">
+                      {first.name}
+                    </h2>
+                    <ExerciseGuideButton exerciseName={first.name} />
                   </div>
-                  {ex.weightText && (
-                    <p className="mt-0.5 font-mono text-sm text-primary">
-                      {ex.weightText}
-                    </p>
+                  {(first.weightText ||
+                    first.targetReps ||
+                    first.targetSets ||
+                    first.tempo ||
+                    first.restSeconds ||
+                    first.targetRirMin != null) && (
+                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+                      {first.weightText && (
+                        <Stat label="Вес" value={first.weightText} />
+                      )}
+                      {first.targetReps && (
+                        <Stat label="Повторения" value={first.targetReps} />
+                      )}
+                      {first.targetSets && (
+                        <Stat label="Подходы" value={first.targetSets} />
+                      )}
+                      {first.tempo && <Stat label="Темп" value={first.tempo} />}
+                      {first.restSeconds ? (
+                        <Stat label="Отдых" value={fmtRest(first.restSeconds)} />
+                      ) : null}
+                      {first.targetRirMin != null && (
+                        <Stat
+                          label="RIR"
+                          value={
+                            first.targetRirMin === first.targetRirMax
+                              ? String(first.targetRirMin)
+                              : `${first.targetRirMin}–${first.targetRirMax}`
+                          }
+                        />
+                      )}
+                    </div>
                   )}
                 </div>
-                {(ex.targetReps || ex.targetSets) && (
-                  <p className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-sm text-secondary-foreground">
-                    {ex.targetReps ?? "—"}
-                    {ex.targetSets ? ` × ${ex.targetSets}` : ""}
-                  </p>
-                )}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                {ex.targetRirMin != null && (
-                  <span className="text-xs font-medium text-warning">
-                    Цель RIR{" "}
-                    {ex.targetRirMin === ex.targetRirMax
-                      ? ex.targetRirMin
-                      : `${ex.targetRirMin}–${ex.targetRirMax}`}
-                  </span>
-                )}
-                {ex.comment && (
-                  <span className="text-pretty text-xs leading-relaxed text-muted-foreground">
-                    {ex.comment}
-                  </span>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+                <div className="px-4 py-3">
+                  {first.comment && (
+                    <p className="mb-3 rounded-md bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground">
+                      {first.comment}
+                    </p>
+                  )}
+                  <div className="rounded-md border border-border px-3 py-2">
+                    <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <History className="size-3.5 shrink-0" />
+                      Прошлое выполнение
+                    </p>
+                    {firstLast.length > 0 ? (
+                      <ul className="flex flex-col gap-1">
+                        {firstLast.map((s, i) => (
+                          <li
+                            key={i}
+                            className="flex items-center justify-between gap-2 text-sm"
+                          >
+                            <span className="font-mono text-xs text-muted-foreground">
+                              #{i + 1}
+                            </span>
+                            <span className="font-medium">
+                              {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              RIR {s.rir ?? "—"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Первая тренировка с этим упражнением
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </section>
+            ) : (
+              <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                В этой тренировке пока нет упражнений.
+              </p>
+            )}
 
-        {cycle?.notes && (
-          <p className="mt-4 rounded-lg border border-border bg-card px-4 py-3 text-pretty text-sm leading-relaxed text-muted-foreground">
-            {cycle.notes}
-          </p>
-        )}
-        </>
+            {restExercises.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold text-muted-foreground">
+                  Далее в тренировке
+                </h3>
+                <ol className="flex flex-col gap-2">
+                  {restExercises.map((ex, i) => (
+                    <li
+                      key={ex.id}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium leading-snug">
+                          <span className="font-mono text-sm text-muted-foreground">
+                            {i + 2}.{" "}
+                          </span>
+                          {ex.name}
+                        </p>
+                        {ex.weightText && (
+                          <p className="mt-0.5 font-mono text-sm text-primary">
+                            {ex.weightText}
+                          </p>
+                        )}
+                      </div>
+                      {(ex.targetReps || ex.targetSets) && (
+                        <p className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-sm text-secondary-foreground">
+                          {ex.targetReps ?? "—"}
+                          {ex.targetSets ? ` × ${ex.targetSets}` : ""}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
+
+            {cycle?.notes && (
+              <p className="rounded-lg border border-border bg-card px-4 py-3 text-pretty text-sm leading-relaxed text-muted-foreground">
+                {cycle.notes}
+              </p>
+            )}
+          </div>
         )}
       </main>
 
