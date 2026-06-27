@@ -41,6 +41,8 @@ export const workoutExercises = pgTable("workout_exercises", {
   targetSets: text("target_sets"),
   targetRirMin: integer("target_rir_min"),
   targetRirMax: integer("target_rir_max"),
+  /** Темп/скорость выполнения, напр. "3-1-1" или "медленно" */
+  tempo: text("tempo"),
   comment: text("comment"),
   restSeconds: integer("rest_seconds"),
 })
