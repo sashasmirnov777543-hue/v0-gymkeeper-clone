@@ -1,4 +1,0 @@
-TRUERAW-START
-Привет мир — тест кириллицы 123
-RIR ≤ цель, отдых
-TRUERAW-END
