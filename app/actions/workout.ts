@@ -167,7 +167,7 @@ export async function getLastSetsByExerciseNames(names: string[]) {
     .where(
       and(eq(sessions.status, "completed"), inArray(workoutExercises.name, names)),
     )
-    .orderBy(desc(sessions.startedAt), desc(loggedSets.id))
+    .orderBy(desc(sessions.startedAt), loggedSets.id)
 
   const result: Record<
     string,
