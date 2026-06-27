@@ -1,4 +1,0 @@
-ASCII-MARKER-START
-Привет мир — тест кириллицы 123
-RIR ≤ цель, отдых
-ASCII-MARKER-END
