@@ -46,11 +46,26 @@ export default async function SessionPage({
       : [undefined]
 
   if (workout.kind === "cardio") {
+    const cardioSession = {
+      id: session.id,
+      status: session.status,
+      startedAt: session.startedAt.toISOString(),
+    }
+    const cardioWorkout = {
+      id: workout.id,
+      title: workout.title,
+      cardioZone: workout.cardioZone,
+      cardioMinutes: workout.cardioMinutes,
+    }
+    const cardioCycle = {
+      number: cardioCycleRow?.number ?? 0,
+      name: cardioCycleRow?.name ?? "",
+    }
     return (
       <CardioSession
-        session= id: session.id, status: session.status, startedAt: session.startedAt.toISOString() 
-        workout= id: workout.id, title: workout.title, cardioZone: workout.cardioZone, cardioMinutes: workout.cardioMinutes 
-        cycle= number: cardioCycleRow?.number ?? 0, name: cardioCycleRow?.name ?? "" 
+        session={cardioSession}
+        workout={cardioWorkout}
+        cycle={cardioCycle}
       />
     )
   }
@@ -73,31 +88,42 @@ export default async function SessionPage({
     exercises.map((e) => e.name),
   )
 
+  const sessionProp = {
+    id: session.id,
+    status: session.status,
+    startedAt: session.startedAt.toISOString(),
+    notes: session.notes,
+  }
+  const workoutProp = { id: workout.id, title: workout.title }
+  const cycleProp = { number: cycle?.number ?? 0, name: cycle?.name ?? "" }
+  const exercisesProp = exercises.map((e) => ({
+    id: e.id,
+    name: e.name,
+    weightText: e.weightText,
+    tempo: e.tempo,
+    targetReps: e.targetReps,
+    targetSets: e.targetSets,
+    targetRirMin: e.targetRirMin,
+    targetRirMax: e.targetRirMax,
+    comment: e.comment,
+    restSeconds: e.restSeconds,
+  }))
+  const initialSetsProp = sets.map((s) => ({
+    id: s.id,
+    workoutExerciseId: s.workoutExerciseId,
+    setNumber: s.setNumber,
+    weight: s.weight != null ? Number.parseFloat(s.weight) : null,
+    reps: s.reps,
+    rir: s.rir,
+  }))
+
   return (
     <SessionLogger
-      session= id: session.id, status: session.status, startedAt: session.startedAt.toISOString(), notes: session.notes 
-      workout= id: workout.id, title: workout.title 
-      cycle= number: cycle?.number ?? 0, name: cycle?.name ?? "" 
-      exercises={exercises.map((e) => ({
-        id: e.id,
-        name: e.name,
-        weightText: e.weightText,
-        tempo: e.tempo,
-        targetReps: e.targetReps,
-        targetSets: e.targetSets,
-        targetRirMin: e.targetRirMin,
-        targetRirMax: e.targetRirMax,
-        comment: e.comment,
-        restSeconds: e.restSeconds,
-      }))}
-      initialSets={sets.map((s) => ({
-        id: s.id,
-        workoutExerciseId: s.workoutExerciseId,
-        setNumber: s.setNumber,
-        weight: s.weight != null ? Number.parseFloat(s.weight) : null,
-        reps: s.reps,
-        rir: s.rir,
-      }))}
+      session={sessionProp}
+      workout={workoutProp}
+      cycle={cycleProp}
+      exercises={exercisesProp}
+      initialSets={initialSetsProp}
       lastSetsByName={lastSetsByName}
     />
   )
