@@ -21,6 +21,10 @@ export async function GET(request: Request) {
   const rirMaxRaw = sp.get("rirMax")
   const rirMin = rirMinRaw != null && rirMinRaw !== "" ? Number(rirMinRaw) : null
   const rirMax = rirMaxRaw != null && rirMaxRaw !== "" ? Number(rirMaxRaw) : null
+  const cyclesParam = sp.get("cycles")
+  const cyclesFilter = cyclesParam
+    ? new Set(cyclesParam.split(",").map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n)))
+    : null
 
   const allCycles = await db.select().from(cycles).orderBy(asc(cycles.sortOrder))
   const blockCycles = allCycles.filter((c) => c.block === block)
@@ -31,13 +35,14 @@ export async function GET(request: Request) {
   const ops: Array<Promise<unknown>> = []
 
   for (const c of blockCycles) {
+    const inFilter = !cyclesFilter || cyclesFilter.has(c.number)
     const cw = allWorkouts.filter((w) => w.cycleId === c.id)
     const strength = cw
       .filter((w) => w.kind === "strength")
       .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
     const first = strength[0]
     if (!first) {
-      report.push({ cycle: c.number, cycleName: c.name, firstStrength: null })
+      report.push({ cycle: c.number, cycleName: c.name, firstStrength: null, inFilter })
       continue
     }
     const exs = allEx
@@ -55,9 +60,10 @@ export async function GET(request: Request) {
       title: first.title,
       exercises: exNames,
       alreadyHasNew: already,
+      inFilter,
     })
 
-    if (apply && name && reps && sets && !already) {
+    if (apply && inFilter && name && reps && sets && !already) {
       let insertIndex = exs.length
       if (after) {
         const idx = exs.findIndex((e) => e.name === after)
@@ -98,5 +104,5 @@ export async function GET(request: Request) {
 
   if (apply) await Promise.all(ops)
 
-  return NextResponse.json({ block, apply, name, reps, sets, after, cycleCount: report.length, report })
+  return NextResponse.json({ block, apply, name, reps, sets, after, cycles: cyclesParam, cycleCount: report.length, report })
 }
