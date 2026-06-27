@@ -1,5 +1,7 @@
 "use client"
 
+// feat: блок «Прошлая тренировка» в карточке упражнения (PR #12)
+
 import { useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
