@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Check, ChevronDown, Minus, Pencil, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
+import { ArrowLeft, Check, ChevronDown, History, Minus, Pencil, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
 import { ExerciseHistory } from "@/components/exercise-history"
@@ -307,6 +307,7 @@ function ExerciseCard({
   onRest: (seconds: number, label: string, rec: Recommendation) => void
 }) {
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [showLast, setShowLast] = useState(false)
   const prescribed = parsePrescribedWeight(exercise.weightText)
   // вес задан процентом от ТМ -> нагрузка фиксирована программой, вверх не гоним
   const fixedLoad = isPercentPrescribed(exercise.weightText)
@@ -399,6 +400,53 @@ function ExerciseCard({
               <span>
                 <strong className="font-semibold">{rec.weight} кг</strong> — {rec.reason}
               </span>
+            </div>
+          )}
+
+          {hasTargets && (
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={() => setShowLast((v) => !v)}
+                className="flex w-full items-center justify-between gap-2 rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground"
+                aria-expanded={showLast}
+              >
+                <span className="flex items-center gap-1.5">
+                  <History className="size-3.5 shrink-0" />
+                  Прошлая тренировка
+                </span>
+                <ChevronDown
+                  className={`size-3.5 shrink-0 transition-transform ${showLast ? "rotate-180" : ""}`}
+                />
+              </button>
+              {showLast && (
+                <div className="mt-1.5">
+                  {lastTimeSets.length > 0 ? (
+                    <ul className="flex flex-col gap-1">
+                      {lastTimeSets.map((s, i) => (
+                        <li
+                          key={i}
+                          className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-1.5 text-sm"
+                        >
+                          <span className="font-mono text-xs text-muted-foreground">
+                            #{i + 1}
+                          </span>
+                          <span className="font-medium">
+                            {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            RIR {s.rir ?? "—"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                      Первая тренировка с этим упражнением
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
