@@ -8,10 +8,18 @@ async function runMigrations(): Promise<void> {
   await pool.query(
     "ALTER TABLE workout_exercises ADD COLUMN IF NOT EXISTS tempo text",
   )
+  // Кардио: заполняемые скорость и сопротивление тренажёра
+  await pool.query(
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS cardio_speed text",
+  )
+  await pool.query(
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS cardio_resistance text",
+  )
 }
 
 /**
- * Гарантирует, что в БД есть недавно добавленные колонки (напр. workout_exercises.tempo).
+ * Гарантирует, что в БД есть недавно добавленные колонки (напр. workout_exercises.tempo,
+ * sessions.cardio_speed/cardio_resistance).
  * Выполняется максимум один раз на инстанс сервера; при ошибке сбрасывает
  * кэш, чтобы повторить на следующем запросе.
  */

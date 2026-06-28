@@ -58,6 +58,10 @@ export const sessions = pgTable("sessions", {
   notes: text("notes"),
   durationSeconds: integer("duration_seconds"),
   avgHr: integer("avg_hr"),
+  /** Кардио: скорость дорожки/тренажёра (свободный текст, напр. "10.5") */
+  cardioSpeed: text("cardio_speed"),
+  /** Кардио: уровень сопротивления тренажёра (свободный текст, напр. "8") */
+  cardioResistance: text("cardio_resistance"),
 })
 
 export const loggedSets = pgTable("logged_sets", {
