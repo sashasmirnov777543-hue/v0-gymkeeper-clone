@@ -38,10 +38,12 @@ async function show(title: string, body: string) {
     body,
     tag: TAG,
     renotify: true,
+    // держим уведомление на экране, пока не закроют — легче заметить/ощутить
+    requireInteraction: true,
     icon: "/icon-192.png",
     badge: "/icon-192.png",
-    // вибрация телефона; часы вибрируют сами при зеркалировании
-    vibrate: [300, 100, 300, 100, 500],
+    // длинная серия вибраций телефона; часы вибрируют сами при зеркалировании
+    vibrate: [0, 500, 200, 500, 200, 500, 200, 900],
   } as NotificationOptions
   try {
     const reg = await navigator.serviceWorker?.getRegistration()

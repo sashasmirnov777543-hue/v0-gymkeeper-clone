@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэширование страниц и статики
-const CACHE = "gym-cache-v4"
+const CACHE = "gym-cache-v5"
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -86,9 +86,12 @@ self.addEventListener("push", (event) => {
       body: data.body || "",
       tag: data.tag || "gym-rest-timer",
       renotify: true,
+      // держим уведомление на экране, пока не закроют — легче заметить/ощутить
+      requireInteraction: true,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      vibrate: [300, 100, 300, 100, 500],
+      // длинная серия вибраций: одиночный короткий сигнал на часах легко пропустить
+      vibrate: [0, 500, 200, 500, 200, 500, 200, 900],
     }),
   )
 })

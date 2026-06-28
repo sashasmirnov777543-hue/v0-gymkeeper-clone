@@ -9,6 +9,10 @@ export const maxDuration = 300
 
 const MAX_WAIT_MS = 290_000
 const VAPID_SUBJECT = "mailto:gymkeeper@viktor.com"
+// Серия пушей в конце отдыха: часы вибрируют несколько раз, а не один
+// (одиночный сигнал легко пропустить).
+const BURST_COUNT = 3
+const BURST_GAP_MS = 1600
 
 let initPromise: Promise<void> | null = null
 function ensureTables(): Promise<void> {
@@ -107,21 +111,26 @@ async function deliverAt(endpoint: string, endAt: number, clientTs: number) {
   ])
   const { publicKey, privateKey } = await getVapidKeys()
   webpush.setVapidDetails(VAPID_SUBJECT, publicKey, privateKey)
-  try {
-    await webpush.sendNotification(
-      JSON.parse(row.subscription),
-      JSON.stringify({
-        title: row.title || "Время! Следующий подход",
-        body: row.body,
-        tag: "gym-rest-timer",
-      }),
-      // TTL побольше (деплой через PR, v2): ColorOS может придерживать доставку для Chrome в дозе —
-      // пусть пуш дождётся «окна» доставки, а не выбрасывается через 2 минуты
-      { TTL: 1800, urgency: "high" },
-    )
-    await log("sent", `endAt=${endAt} body=${row.body}`)
-  } catch (e) {
-    await log("send_error", String(e))
+  const sub = JSON.parse(row.subscription)
+  const payload = JSON.stringify({
+    title: row.title || "Время! Следующий подход",
+    body: row.body,
+    tag: "gym-rest-timer",
+  })
+  // Серия из нескольких пушей подряд: один тег + renotify в service worker —
+  // на телефоне это одно уведомление, но каждый пуш повторяет сигнал, и часы
+  // вибрируют несколько раз.
+  for (let i = 0; i < BURST_COUNT; i++) {
+    try {
+      await webpush.sendNotification(sub, payload, { TTL: 1800, urgency: "high" })
+      await log("sent", `burst ${i + 1}/${BURST_COUNT} endAt=${endAt} body=${row.body}`)
+    } catch (e) {
+      await log("send_error", String(e))
+      break
+    }
+    if (i < BURST_COUNT - 1) {
+      await new Promise((res) => setTimeout(res, BURST_GAP_MS))
+    }
   }
 }
 
