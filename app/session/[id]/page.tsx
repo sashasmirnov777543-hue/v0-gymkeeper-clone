@@ -9,7 +9,10 @@ import {
   workoutExercises,
   workouts,
 } from "@/lib/db/schema"
-import { getLastSetsByExerciseNames } from "@/app/actions/workout"
+import {
+  getLastCardioSession,
+  getLastSetsByExerciseNames,
+} from "@/app/actions/workout"
 import { SessionLogger } from "@/components/session-logger"
 import { CardioSession } from "@/components/cardio-session"
 
@@ -46,10 +49,21 @@ export default async function SessionPage({
       : [undefined]
 
   if (workout.kind === "cardio") {
+    const lastCardioRow = await getLastCardioSession(workout.title, session.id)
+    const lastCardio = lastCardioRow
+      ? {
+          speed: lastCardioRow.speed,
+          resistance: lastCardioRow.resistance,
+          durationSeconds: lastCardioRow.durationSeconds,
+          startedAt: lastCardioRow.startedAt.toISOString(),
+        }
+      : null
     const cardioSession = {
       id: session.id,
       status: session.status,
       startedAt: session.startedAt.toISOString(),
+      speed: session.cardioSpeed,
+      resistance: session.cardioResistance,
     }
     const cardioWorkout = {
       id: workout.id,
@@ -66,6 +80,7 @@ export default async function SessionPage({
         session={cardioSession}
         workout={cardioWorkout}
         cycle={cardioCycle}
+        lastCardio={lastCardio}
       />
     )
   }

@@ -42,10 +42,22 @@ export function CardioSession({
   session,
   workout,
   cycle,
+  lastCardio,
 }: {
-  session: { id: number; status: string }
+  session: {
+    id: number
+    status: string
+    speed?: string | null
+    resistance?: string | null
+  }
   workout: { id: number; title: string; cardioZone: string | null; cardioMinutes: string | null }
   cycle: { number: number; name: string }
+  lastCardio?: {
+    speed: string | null
+    resistance: string | null
+    durationSeconds: number | null
+    startedAt: string
+  } | null
 }) {
   const router = useRouter()
   const hr = useHeartRate()
@@ -56,6 +68,8 @@ export function CardioSession({
   const [running, setRunning] = useState(true)
   const [finishing, setFinishing] = useState(false)
   const [maxHr, setMaxHr] = useState(185)
+  const [speed, setSpeed] = useState(session.speed ?? "")
+  const [resistance, setResistance] = useState(session.resistance ?? "")
   const startedAtRef = useRef<number>(Date.now())
   const lastZoneWarnRef = useRef<number>(0)
 
@@ -101,6 +115,8 @@ export function CardioSession({
         sessionId: session.id,
         durationSeconds: elapsed,
         avgHr: avg,
+        speed: speed.trim() || null,
+        resistance: resistance.trim() || null,
       })
     } catch {
       // офлайн — всё равно уходим, серверная запись не критична для кардио
@@ -140,6 +156,87 @@ export function CardioSession({
             <span className="mt-1 text-sm text-muted-foreground">
               Цель: {workout.cardioMinutes} мин · {workout.cardioZone}
             </span>
+          )}
+        </div>
+
+        {/* скорость и сопротивление */}
+        <div className="w-full max-w-xs">
+          {lastCardio &&
+          (lastCardio.speed || lastCardio.resistance || lastCardio.durationSeconds) ? (
+            <div className="mb-3 rounded-xl border border-border bg-card px-4 py-2.5">
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                Прошлая тренировка
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span>
+                  Скорость:{" "}
+                  <span className="font-semibold">{lastCardio.speed || "—"}</span>
+                </span>
+                <span>
+                  Сопротивление:{" "}
+                  <span className="font-semibold">
+                    {lastCardio.resistance || "—"}
+                  </span>
+                </span>
+                {lastCardio.durationSeconds ? (
+                  <span className="text-muted-foreground">
+                    {fmt(lastCardio.durationSeconds)}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {readOnly ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-border bg-card px-4 py-3 text-center">
+                <p className="text-xs text-muted-foreground">Скорость</p>
+                <p className="mt-0.5 font-mono text-lg font-semibold">
+                  {session.speed || "—"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-card px-4 py-3 text-center">
+                <p className="text-xs text-muted-foreground">Сопротивление</p>
+                <p className="mt-0.5 font-mono text-lg font-semibold">
+                  {session.resistance || "—"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="cardio-speed"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Скорость
+                </label>
+                <input
+                  id="cardio-speed"
+                  inputMode="decimal"
+                  value={speed}
+                  onChange={(e) => setSpeed(e.target.value)}
+                  placeholder="напр. 10"
+                  className="h-12 w-full rounded-xl border border-input bg-transparent px-3 text-center text-lg font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="cardio-resistance"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Сопротивление
+                </label>
+                <input
+                  id="cardio-resistance"
+                  inputMode="decimal"
+                  value={resistance}
+                  onChange={(e) => setResistance(e.target.value)}
+                  placeholder="напр. 8"
+                  className="h-12 w-full rounded-xl border border-input bg-transparent px-3 text-center text-lg font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+            </div>
           )}
         </div>
 

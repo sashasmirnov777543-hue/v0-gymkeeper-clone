@@ -9,10 +9,11 @@ import {
   sessions,
   loggedSets,
 } from "@/lib/db/schema"
-import { and, desc, eq, inArray } from "drizzle-orm"
+import { and, desc, eq, inArray, ne } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { applyAmrapTmRecalc } from "@/lib/tm-recalc"
+import { ensureSchema } from "@/lib/db/migrate"
 
 export async function startSession(workoutId: number) {
   // если уже есть активная сессия этой тренировки — продолжаем её
@@ -122,12 +123,15 @@ export async function updateSet(input: {
   revalidatePath(`/session/${input.sessionId}`)
 }
 
-/** Завершение кардио-сессии: пишем длительность и средний пульс */
+/** Завершение кардио-сессии: пишем длительность, средний пульс, скорость и сопротивление */
 export async function finishCardioSession(input: {
   sessionId: number
   durationSeconds: number
   avgHr: number | null
+  speed?: string | null
+  resistance?: string | null
 }) {
+  await ensureSchema()
   await db
     .update(sessions)
     .set({
@@ -135,10 +139,44 @@ export async function finishCardioSession(input: {
       finishedAt: new Date(),
       durationSeconds: input.durationSeconds,
       avgHr: input.avgHr,
+      cardioSpeed: input.speed ?? null,
+      cardioResistance: input.resistance ?? null,
     })
     .where(eq(sessions.id, input.sessionId))
   revalidatePath("/")
   revalidatePath("/history")
+}
+
+/**
+ * Прошлая кардио-тренировка того же типа (по названию тренировки):
+ * скорость, сопротивление, длительность и средний пульс последней
+ * завершённой сессии. Нужна, чтобы показать прошлые значения.
+ */
+export async function getLastCardioSession(
+  workoutTitle: string,
+  excludeSessionId: number,
+) {
+  await ensureSchema()
+  const rows = await db
+    .select({
+      speed: sessions.cardioSpeed,
+      resistance: sessions.cardioResistance,
+      durationSeconds: sessions.durationSeconds,
+      avgHr: sessions.avgHr,
+      startedAt: sessions.startedAt,
+    })
+    .from(sessions)
+    .innerJoin(workouts, eq(sessions.workoutId, workouts.id))
+    .where(
+      and(
+        eq(workouts.title, workoutTitle),
+        eq(sessions.status, "completed"),
+        ne(sessions.id, excludeSessionId),
+      ),
+    )
+    .orderBy(desc(sessions.startedAt))
+    .limit(1)
+  return rows[0] ?? null
 }
 
 /**
