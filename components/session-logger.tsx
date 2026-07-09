@@ -311,11 +311,9 @@ export function SessionLogger({
             </Button>
             {readOnly ? (
               isLast ? (
-                <Button asChild className="flex-[2]">
-                  <Link href="/history">
-                    <History className="size-4" />
-                    К истории
-                  </Link>
+                <Button render={<Link href="/history" />} className="flex-[2]">
+                  <History className="size-4" />
+                  К истории
                 </Button>
               ) : (
                 <Button className="flex-[2]" onClick={goNext}>
