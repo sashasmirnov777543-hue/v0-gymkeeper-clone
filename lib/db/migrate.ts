@@ -23,6 +23,9 @@ async function runMigrations(): Promise<void> {
     "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS back_pain integer",
     "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS energy integer",
     "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS readiness_level text",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS cardio_rpe integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS cardio_talk_test text",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS cardio_symptoms text",
     "ALTER TABLE logged_sets ADD COLUMN IF NOT EXISTS velocity text",
     "ALTER TABLE logged_sets ADD COLUMN IF NOT EXISTS sticking_point text",
   ])

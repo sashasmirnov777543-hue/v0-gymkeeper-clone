@@ -67,9 +67,13 @@ export default async function SessionPage({
       id: session.id,
       status: session.status,
       startedAt: session.startedAt.toISOString(),
+      durationSeconds: session.durationSeconds,
       speed: session.cardioSpeed,
       resistance: session.cardioResistance,
       readinessLevel: session.readinessLevel,
+      cardioRpe: session.cardioRpe,
+      cardioTalkTest: session.cardioTalkTest,
+      cardioSymptoms: session.cardioSymptoms,
     };
     const cardioWorkout = {
       id: workout.id,

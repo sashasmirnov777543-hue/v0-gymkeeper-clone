@@ -36,6 +36,18 @@ type OpPayload =
       finishedAt: string;
       proposedTm?: number;
     }
+  | {
+      kind: "cardioFinish";
+      sessionRef: number | string;
+      finishedAt: string;
+      durationSeconds: number;
+      avgHr: number | null;
+      speed: string | null;
+      resistance: string | null;
+      cardioRpe: number;
+      cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
+      cardioSymptoms: string | null;
+    }
   | { kind: "cancel"; sessionRef: number | string }
   | { kind: "deleteSet"; setId: number };
 
@@ -192,6 +204,29 @@ export async function POST(req: Request) {
             },
           );
           result = { kind: "finish", sessionId, tmRecalc };
+          break;
+        }
+        case "cardioFinish": {
+          const sessionId = resolveRef(op.sessionRef);
+          if (sessionId == null) {
+            result = { kind: "cardioFinish", skipped: true };
+            break;
+          }
+          await tx
+            .update(sessions)
+            .set({
+              status: "completed",
+              finishedAt: new Date(op.finishedAt),
+              durationSeconds: op.durationSeconds,
+              avgHr: op.avgHr,
+              cardioSpeed: op.speed,
+              cardioResistance: op.resistance,
+              cardioRpe: op.cardioRpe,
+              cardioTalkTest: op.cardioTalkTest,
+              cardioSymptoms: op.cardioSymptoms,
+            })
+            .where(eq(sessions.id, sessionId));
+          result = { kind: "cardioFinish", sessionId };
           break;
         }
         case "cancel": {

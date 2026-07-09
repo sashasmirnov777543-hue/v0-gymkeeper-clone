@@ -1,171 +1,149 @@
-"use client"
-
-import { useMemo, useState } from "react"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
-import { BarChart3 } from "lucide-react"
+"use client";
+import { useMemo, useState } from "react";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { BarChart3 } from "lucide-react";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
-} from "@/components/ui/chart"
-import { epley1RM } from "@/lib/recommend"
-
+} from "@/components/ui/chart";
+import { e1rmForStats, isE1rmExercise } from "@/lib/stats";
 type Row = {
-  exerciseName: string
-  weight: number | null
-  reps: number | null
-  rir: number | null
-  date: string
-  sessionId: number
-}
-
-const chartConfig = {
-  e1rm: { label: "Расчётный 1ПМ", color: "var(--chart-1)" },
-} satisfies ChartConfig
-
-const dateFmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" })
-
+  exerciseName: string;
+  weight: number | null;
+  reps: number | null;
+  rir: number | null;
+  date: string;
+  sessionId: number;
+};
+const dateFmt = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "short",
+});
 export function StatsView({ rows }: { rows: Row[] }) {
-  const exerciseNames = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const r of rows) {
-      if (r.weight != null && r.reps != null) {
-        counts[r.exerciseName] = (counts[r.exerciseName] ?? 0) + 1
-      }
-    }
-    return Object.entries(counts)
+  const names = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of rows)
+      if (r.weight != null && r.reps != null)
+        c[r.exerciseName] = (c[r.exerciseName] ?? 0) + 1;
+    return Object.entries(c)
       .sort((a, b) => b[1] - a[1])
-      .map(([name]) => name)
-  }, [rows])
-
-  const [selected, setSelected] = useState<string | null>(null)
-  const active = selected ?? exerciseNames[0] ?? null
-
-  const { chartData, best, totalVolume, totalSets } = useMemo(() => {
-    if (!active) return { chartData: [], best: null, totalVolume: 0, totalSets: 0 }
-    const filtered = rows.filter(
-      (r) => r.exerciseName === active && r.weight != null && r.reps != null,
-    )
-    // лучший e1RM на каждую сессию
-    const bySession = new Map<number, { date: string; e1rm: number; weight: number }>()
-    let volume = 0
-    for (const r of filtered) {
-      const e = epley1RM(r.weight as number, r.reps as number)
-      volume += (r.weight as number) * (r.reps as number)
-      const cur = bySession.get(r.sessionId)
-      if (!cur || e > cur.e1rm) {
-        bySession.set(r.sessionId, {
-          date: r.date,
-          e1rm: Math.round(e * 10) / 10,
-          weight: r.weight as number,
-        })
-      }
+      .map(([n]) => n);
+  }, [rows]);
+  const [selected, setSelected] = useState<string | null>(null),
+    active = selected ?? names[0] ?? null,
+    useE1rm = active ? isE1rmExercise(active) : false;
+  const summary = useMemo(() => {
+    if (!active)
+      return { chartData: [], bestWeight: null, totalVolume: 0, totalSets: 0 };
+    const f = rows.filter(
+        (r) => r.exerciseName === active && r.weight != null && r.reps != null,
+      ),
+      by = new Map<number, { date: string; value: number }>();
+    let volume = 0,
+      best = 0;
+    for (const r of f) {
+      const w = r.weight as number,
+        reps = r.reps as number;
+      volume += w * reps;
+      best = Math.max(best, w);
+      const value = useE1rm ? e1rmForStats(active, w, reps) : w;
+      if (value == null) continue;
+      const cur = by.get(r.sessionId);
+      if (!cur || value > cur.value)
+        by.set(r.sessionId, { date: r.date, value });
     }
-    const data = Array.from(bySession.values()).map((d) => ({
-      label: dateFmt.format(new Date(d.date)),
-      e1rm: d.e1rm,
-    }))
-    const bestRow =
-      filtered.length > 0
-        ? filtered.reduce((acc, r) =>
-            (r.weight as number) > (acc.weight as number) ? r : acc,
-          )
-        : null
     return {
-      chartData: data,
-      best: bestRow,
+      chartData: Array.from(by.values()).map((x) => ({
+        label: dateFmt.format(new Date(x.date)),
+        value: x.value,
+      })),
+      bestWeight: best || null,
       totalVolume: Math.round(volume),
-      totalSets: filtered.length,
-    }
-  }, [rows, active])
-
-  if (exerciseNames.length === 0) {
+      totalSets: f.length,
+    };
+  }, [rows, active, useE1rm]);
+  if (!names.length)
     return (
       <div className="mx-4 my-2 flex flex-col items-center gap-2 rounded-xl border border-dashed border-border px-6 py-10 text-center">
         <BarChart3 className="size-8 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground text-pretty">
-          Завершите хотя бы одну тренировку с записанными подходами — здесь появятся графики прогресса
+        <p className="text-sm text-muted-foreground">
+          Завершите тренировку — здесь появится прогресс.
         </p>
       </div>
-    )
-  }
-
+    );
+  const config = {
+    value: {
+      label: useE1rm ? "Расчётный 1ПМ" : "Максимальный вес",
+      color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+  const margin = { left: 0, right: 8, top: 8, bottom: 0 };
   return (
     <div className="flex flex-col gap-4 px-4 py-2">
-      <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Упражнение">
-        {exerciseNames.map((name) => (
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {names.map((n) => (
           <button
-            key={name}
-            type="button"
-            role="tab"
-            aria-selected={active === name}
-            onClick={() => setSelected(name)}
-            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-              active === name
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border text-muted-foreground hover:bg-secondary"
-            }`}
+            key={n}
+            onClick={() => setSelected(n)}
+            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium ${active === n ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground"}`}
           >
-            {name.length > 30 ? `${name.slice(0, 30)}…` : name}
+            {n.length > 30 ? `${n.slice(0, 30)}…` : n}
           </button>
         ))}
       </div>
-
       <div className="grid grid-cols-3 gap-2">
-        <div className="rounded-xl border border-border bg-card px-3 py-3 text-center">
-          <p className="text-lg font-bold">
-            {best?.weight != null ? `${best.weight}` : "—"}
-          </p>
-          <p className="text-xs text-muted-foreground">лучший вес, кг</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-3 text-center">
-          <p className="text-lg font-bold">{totalSets}</p>
-          <p className="text-xs text-muted-foreground">подходов</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-3 text-center">
-          <p className="text-lg font-bold">{totalVolume.toLocaleString("ru-RU")}</p>
-          <p className="text-xs text-muted-foreground">тоннаж, кг</p>
-        </div>
+        <Stat value={summary.bestWeight ?? "—"} label="лучший вес, кг" />
+        <Stat value={summary.totalSets} label="подходов" />
+        <Stat
+          value={summary.totalVolume.toLocaleString("ru-RU")}
+          label="тоннаж, кг"
+        />
       </div>
-
       <div className="rounded-xl border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold">Расчётный 1ПМ по сессиям</h2>
-        {chartData.length < 2 ? (
-          <p className="py-6 text-center text-xs text-muted-foreground text-pretty">
-            Нужно минимум две завершённые сессии с этим упражнением, чтобы построить график
+        <h2 className="text-sm font-semibold">
+          {useE1rm ? "Расчётный 1ПМ по сессиям" : "Максимальный вес по сессиям"}
+        </h2>
+        <p className="mb-3 mt-1 text-xs text-muted-foreground">
+          {useE1rm
+            ? "Только варианты жима и подходы 1–10 повторов."
+            : "Для изоляции e1RM не рассчитывается."}
+        </p>
+        {summary.chartData.length < 2 ? (
+          <p className="py-6 text-center text-xs text-muted-foreground">
+            Нужно минимум две сессии.
           </p>
         ) : (
-          <ChartContainer config={chartConfig} className="h-56 w-full">
-            <AreaChart data={chartData} margin={{ left: -10, right: 10 }}>
-              <CartesianGrid vertical={false} strokeOpacity={0.2} />
-              <XAxis
-                dataKey="label"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                fontSize={11}
-              />
+          <ChartContainer config={config} className="h-56 w-full">
+            <AreaChart data={summary.chartData} margin={margin}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} />
               <YAxis
                 tickLine={false}
                 axisLine={false}
-                tickMargin={4}
-                fontSize={11}
                 domain={["dataMin - 5", "dataMax + 5"]}
               />
               <ChartTooltip content={<ChartTooltipContent />} />
               <Area
-                dataKey="e1rm"
+                dataKey="value"
                 type="monotone"
-                stroke="var(--color-e1rm)"
-                fill="var(--color-e1rm)"
+                stroke="var(--color-value)"
+                fill="var(--color-value)"
                 fillOpacity={0.15}
-                strokeWidth={2}
               />
             </AreaChart>
           </ChartContainer>
         )}
       </div>
     </div>
-  )
+  );
+}
+function Stat({ value, label }: { value: string | number; label: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card px-2 py-3 text-center">
+      <p className="text-lg font-bold">{value}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
+    </div>
+  );
 }

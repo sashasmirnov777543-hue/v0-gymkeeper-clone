@@ -63,6 +63,9 @@ export const sessions = pgTable("sessions", {
   cardioSpeed: text("cardio_speed"),
   /** Кардио: уровень сопротивления тренажёра (свободный текст, напр. "8") */
   cardioResistance: text("cardio_resistance"),
+  cardioRpe: integer("cardio_rpe"),
+  cardioTalkTest: text("cardio_talk_test"),
+  cardioSymptoms: text("cardio_symptoms"),
   sleepMinutes: integer("sleep_minutes"),
   sleepQuality: integer("sleep_quality"),
   morningPulseDelta: integer("morning_pulse_delta"),

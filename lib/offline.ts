@@ -77,6 +77,18 @@ export type OutboxPayload =
       finishedAt: string;
       proposedTm?: number;
     }
+  | {
+      kind: "cardioFinish";
+      sessionRef: number | string;
+      finishedAt: string;
+      durationSeconds: number;
+      avgHr: number | null;
+      speed: string | null;
+      resistance: string | null;
+      cardioRpe: number;
+      cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
+      cardioSymptoms: string | null;
+    }
   | { kind: "cancel"; sessionRef: number | string }
   | { kind: "deleteSet"; setId: number };
 
@@ -244,6 +256,22 @@ export function finishLocalSession(localKey: string, proposedTm?: number) {
     sessionRef: localKey,
     finishedAt: new Date().toISOString(),
     proposedTm,
+  });
+  removeLocalSession(localKey);
+}
+
+export function finishLocalCardioSession(
+  localKey: string,
+  data: Omit<
+    Extract<OutboxPayload, { kind: "cardioFinish" }>,
+    "kind" | "sessionRef" | "finishedAt"
+  >,
+) {
+  pushOp({
+    kind: "cardioFinish",
+    sessionRef: localKey,
+    finishedAt: new Date().toISOString(),
+    ...data,
   });
   removeLocalSession(localKey);
 }

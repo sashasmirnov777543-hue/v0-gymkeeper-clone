@@ -168,6 +168,9 @@ export async function finishCardioSession(input: {
   avgHr: number | null;
   speed?: string | null;
   resistance?: string | null;
+  cardioRpe: number;
+  cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
+  cardioSymptoms?: string | null;
 }) {
   await ensureSchema();
   await db
@@ -179,6 +182,9 @@ export async function finishCardioSession(input: {
       avgHr: input.avgHr,
       cardioSpeed: input.speed ?? null,
       cardioResistance: input.resistance ?? null,
+      cardioRpe: input.cardioRpe,
+      cardioTalkTest: input.cardioTalkTest,
+      cardioSymptoms: input.cardioSymptoms?.trim() || null,
     })
     .where(eq(sessions.id, input.sessionId));
   revalidatePath("/");
