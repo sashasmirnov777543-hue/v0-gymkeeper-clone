@@ -62,7 +62,7 @@ export type OutboxOp =
       reps: number | null
       rir: number | null
     }
-  | { kind: "finish"; sessionRef: number | string; finishedAt: string }
+  | { kind: "finish"; sessionRef: number | string; finishedAt: string; proposedTm?: number }
   | { kind: "cancel"; sessionRef: number | string }
   | { kind: "deleteSet"; setId: number }
 
@@ -204,11 +204,12 @@ export function cancelLocalSession(localKey: string) {
 }
 
 /** Локальная сессия завершена — подходы и финиш уже в очереди */
-export function finishLocalSession(localKey: string) {
+export function finishLocalSession(localKey: string, proposedTm?: number) {
   pushOp({
     kind: "finish",
     sessionRef: localKey,
     finishedAt: new Date().toISOString(),
+    proposedTm,
   })
   removeLocalSession(localKey)
 }

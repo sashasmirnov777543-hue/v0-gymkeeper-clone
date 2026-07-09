@@ -63,14 +63,14 @@ export async function deleteSet(setId: number, sessionId: number) {
   revalidatePath(`/session/${sessionId}`)
 }
 
-export async function finishSession(sessionId: number) {
+export async function finishSession(sessionId: number, proposedTm?: number) {
   await db
     .update(sessions)
     .set({ status: "completed", finishedAt: new Date() })
     .where(eq(sessions.id, sessionId))
 
   // если в сессии был AMRAP — автоматически пересчитываем ТМ следующего макро
-  const recalc = await applyAmrapTmRecalc(sessionId)
+  const recalc = await applyAmrapTmRecalc(sessionId, { proposedTm })
 
   revalidatePath("/")
   revalidatePath("/history")

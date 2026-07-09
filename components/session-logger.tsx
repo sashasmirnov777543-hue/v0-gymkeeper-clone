@@ -25,6 +25,7 @@ import { RestTimer } from "@/components/rest-timer"
 import { SessionNotes } from "@/components/session-notes"
 import { WarmupPlates } from "@/components/warmup-plates"
 import { MyorepsPanel } from "@/components/myoreps-panel"
+import { trainingMaxFromAmrap } from "@/lib/training-logic"
 import { useWakeLock } from "@/lib/heart-rate"
 import { unlockAudio } from "@/lib/sound"
 import {
@@ -136,14 +137,38 @@ export function SessionLogger({
   }
 
   const handleFinish = () => {
+    let proposedTm: number | undefined
+    const amrapExerciseIds = new Set(
+      exercises
+        .filter((exercise) => exercise.name.toLocaleLowerCase("ru-RU").includes("amrap"))
+        .map((exercise) => exercise.id),
+    )
+    const candidates = sets
+      .filter((set) => amrapExerciseIds.has(set.workoutExerciseId) && set.weight && set.reps)
+      .map((set) => ({ set, calc: trainingMaxFromAmrap(set.weight as number, set.reps as number) }))
+      .sort((a, b) => b.calc.e1rm - a.calc.e1rm)
+    if (candidates.length > 0) {
+      const best = candidates[0]
+      const entered = prompt(
+        `AMRAP ${best.set.weight} кг × ${best.set.reps}\ne1RM: ${best.calc.e1rm.toFixed(1)} кг\nTM по правилу 0,90: ${best.calc.tm} кг\n\nПодтверди или измени TM:`,
+        String(best.calc.tm),
+      )
+      if (entered == null) return
+      const parsed = Number(entered.replace(",", "."))
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        alert("TM должен быть положительным числом")
+        return
+      }
+      proposedTm = parsed
+    }
     if (offlineKey) {
-      finishLocalSession(offlineKey)
+      finishLocalSession(offlineKey, proposedTm)
       router.push("/history")
       return
     }
     startTransition(async () => {
       try {
-        await finishSession(session.id)
+        await finishSession(session.id, proposedTm)
       } catch (err) {
         // офлайн: ставим в очередь и уходим
         if (isOffline(err)) {
@@ -151,6 +176,7 @@ export function SessionLogger({
             kind: "finish",
             sessionRef,
             finishedAt: new Date().toISOString(),
+            proposedTm,
           })
           router.push("/history")
         } else {

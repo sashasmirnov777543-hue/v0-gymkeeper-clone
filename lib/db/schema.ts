@@ -81,3 +81,15 @@ export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 })
+
+export const tmRecalcEvents = pgTable("tm_recalc_events", {
+  sessionId: integer("session_id").primaryKey(),
+  targetMacro: integer("target_macro").notNull(),
+  oldTm: numeric("old_tm"),
+  newTm: numeric("new_tm").notNull(),
+  amrapWeight: numeric("amrap_weight").notNull(),
+  amrapReps: integer("amrap_reps").notNull(),
+  e1rm: numeric("e1rm").notNull(),
+  updatedExercises: integer("updated_exercises").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+})

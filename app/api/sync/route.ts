@@ -17,7 +17,7 @@ type Op =
       reps: number | null
       rir: number | null
     }
-  | { kind: "finish"; sessionRef: number | string; finishedAt: string }
+  | { kind: "finish"; sessionRef: number | string; finishedAt: string; proposedTm?: number }
   | { kind: "cancel"; sessionRef: number | string }
   | { kind: "deleteSet"; setId: number }
 
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
           .set({ status: "completed", finishedAt: new Date(op.finishedAt) })
           .where(eq(sessions.id, sessionId))
         // офлайн-завершённый AMRAP тоже пересчитывает ТМ
-        const recalc = await applyAmrapTmRecalc(sessionId)
+        const recalc = await applyAmrapTmRecalc(sessionId, { proposedTm: op.proposedTm })
         if (recalc) tmRecalcs.push(recalc)
         break
       }

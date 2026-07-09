@@ -1,3 +1,7 @@
+import { epley1RM, roundToStep } from "@/lib/training-logic"
+
+export { epley1RM, roundToStep }
+
 // Логика рекомендации веса на основе RIR (Reps In Reserve)
 
 export type LoggedSetLite = {
@@ -13,10 +17,6 @@ export type Recommendation = {
 } | null
 
 const STEP = 2.5 // шаг штанги, кг
-
-export function roundToStep(w: number): number {
-  return Math.round(w / STEP) * STEP
-}
 
 // Стартовый вес из текста типа "70 % (77), RPE 7" или "40 кг, RIR 3"
 export function parsePrescribedWeight(weightText: string | null): number | null {
@@ -159,10 +159,4 @@ export function recommendWeight(
 
 function formatRir(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
-}
-
-// Формула Эпли: e1RM = вес × (1 + 0.0333 × повторения)
-export function epley1RM(weight: number, reps: number): number {
-  if (reps <= 1) return weight
-  return weight * (1 + 0.0333 * reps)
 }
