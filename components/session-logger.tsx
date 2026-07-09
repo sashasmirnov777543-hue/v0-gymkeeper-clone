@@ -69,6 +69,8 @@ type SetRow = {
   weight: number | null;
   reps: number | null;
   rir: number | null;
+  velocity?: string | null;
+  stickingPoint?: string | null;
 };
 
 function fmtRest(sec: number): string {
@@ -111,6 +113,7 @@ export function SessionLogger({
     status: string;
     startedAt: string;
     notes?: string | null;
+    readinessLevel?: string | null;
   };
   workout: { id: number; title: string };
   cycle: { number: number; name: string; block: string };
@@ -281,6 +284,29 @@ export function SessionLogger({
         )}
       </header>
 
+      {session.readinessLevel && (
+        <div
+          className={`mx-4 mt-3 rounded-lg border p-3 text-sm readiness-${session.readinessLevel}`}
+        >
+          <strong>
+            Готовность:{" "}
+            {session.readinessLevel === "green"
+              ? "зелёная"
+              : session.readinessLevel === "yellow"
+                ? "жёлтая"
+                : session.readinessLevel === "orange"
+                  ? "оранжевая"
+                  : "красная"}
+          </strong>
+          {(session.readinessLevel === "orange" ||
+            session.readinessLevel === "red") && (
+            <p className="mt-1 text-muted-foreground">
+              Мини-тейпер включён: изоляция и миорепсы скрыты.
+            </p>
+          )}
+        </div>
+      )}
+
       {current ? (
         <CurrentExercise
           key={current.id}
@@ -324,6 +350,7 @@ export function SessionLogger({
           onAdvance={isLast ? undefined : goNext}
           cycleNumber={cycle.number}
           block={cycle.block}
+          readinessLevel={session.readinessLevel}
         />
       ) : (
         <div className="px-4 py-10 text-center text-sm text-muted-foreground">
@@ -430,6 +457,7 @@ function CurrentExercise({
   onAdvance,
   cycleNumber,
   block,
+  readinessLevel,
 }: {
   exercise: Exercise;
   position: number;
@@ -452,6 +480,7 @@ function CurrentExercise({
   onAdvance?: () => void;
   cycleNumber: number;
   block: string;
+  readinessLevel?: string | null;
 }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const prescribed = parsePrescribedWeight(exercise.weightText);
@@ -542,6 +571,7 @@ function CurrentExercise({
             block={block}
             cycleNumber={cycleNumber}
             readOnly={readOnly}
+            readinessLevel={readinessLevel}
           />
 
           {exercise.comment && (
@@ -659,6 +689,20 @@ function CurrentExercise({
                   <span className="text-xs text-muted-foreground">
                     RIR {s.rir ?? "—"}
                   </span>
+                  {s.velocity && (
+                    <span
+                      className={`text-xs font-semibold ${s.velocity === "slow" ? "text-warning" : "text-muted-foreground"}`}
+                    >
+                      {s.velocity === "fast"
+                        ? "Быстро"
+                        : s.velocity === "slow"
+                          ? "Медленно"
+                          : "Нормально"}
+                      {s.stickingPoint
+                        ? ` · ${s.stickingPoint === "chest" ? "грудь" : s.stickingPoint === "middle" ? "середина" : "локаут"}`
+                        : ""}
+                    </span>
+                  )}
                   {!readOnly && (
                     <span className="flex items-center gap-1">
                       <button
@@ -717,7 +761,7 @@ function CurrentExercise({
           key={doneSets.length}
           defaultWeight={rec?.weight ?? prescribed}
           targetRirMin={exercise.targetRirMin}
-          onSubmit={async (weight, reps, rir) => {
+          onSubmit={async (weight, reps, rir, velocity, stickingPoint) => {
             const tempId = -Date.now();
             const setNumber = doneSets.length + 1;
             const row: SetRow = {
@@ -727,6 +771,8 @@ function CurrentExercise({
               weight,
               reps,
               rir,
+              velocity,
+              stickingPoint,
             };
             onLogged(row);
 
@@ -759,6 +805,8 @@ function CurrentExercise({
                 weight,
                 reps,
                 rir,
+                velocity,
+                stickingPoint,
               });
               return;
             }
@@ -771,6 +819,8 @@ function CurrentExercise({
                 weight,
                 reps,
                 rir,
+                velocity,
+                stickingPoint,
               });
               if (inserted?.id != null) onReplaceId(tempId, inserted.id);
             } catch (err) {
@@ -783,6 +833,8 @@ function CurrentExercise({
                   weight,
                   reps,
                   rir,
+                  velocity,
+                  stickingPoint,
                 });
               } else {
                 throw err;
@@ -823,6 +875,8 @@ function SetForm({
     weight: number | null,
     reps: number | null,
     rir: number | null,
+    velocity: "fast" | "normal" | "slow",
+    stickingPoint: "chest" | "middle" | "lockout" | null,
   ) => Promise<void>;
 }) {
   const [weight, setWeight] = useState<string>(
@@ -830,6 +884,12 @@ function SetForm({
   );
   const [reps, setReps] = useState<string>("");
   const [rir, setRir] = useState<number | null>(targetRirMin);
+  const [velocity, setVelocity] = useState<"fast" | "normal" | "slow">(
+    "normal",
+  );
+  const [stickingPoint, setStickingPoint] = useState<
+    "chest" | "middle" | "lockout" | null
+  >(null);
   const [saving, setSaving] = useState(false);
 
   const bump = (delta: number) => {
@@ -853,6 +913,8 @@ function SetForm({
           Number.isNaN(w as number) ? null : w,
           Number.isNaN(r as number) ? null : r,
           rir,
+          velocity,
+          stickingPoint,
         );
         setSaving(false);
       }}
@@ -933,6 +995,62 @@ function SetForm({
           ))}
         </div>
       </div>
+
+      <fieldset>
+        <legend className="text-xs text-muted-foreground">
+          Скорость подхода
+        </legend>
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {(
+            [
+              ["fast", "Быстро"],
+              ["normal", "Нормально"],
+              ["slow", "Медленно"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setVelocity(value)}
+              className={`h-10 rounded-md border text-sm font-semibold ${velocity === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {velocity === "slow" && (
+          <p className="mt-2 rounded-md bg-warning/15 p-2 text-xs text-warning">
+            Velocity stop: не добавляйте нагрузку; при повторном замедлении
+            завершите упражнение.
+          </p>
+        )}
+      </fieldset>
+
+      <fieldset>
+        <legend className="text-xs text-muted-foreground">
+          Зона стопора (если был на тяжёлом подходе)
+        </legend>
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {(
+            [
+              ["chest", "Грудь"],
+              ["middle", "Середина"],
+              ["lockout", "Локаут"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() =>
+                setStickingPoint(stickingPoint === value ? null : value)
+              }
+              className={`h-10 rounded-md border text-xs font-semibold ${stickingPoint === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       <Button type="submit" disabled={saving} className="h-11 w-full">
         {saving ? "Сохраняю..." : "Закончить подход"}

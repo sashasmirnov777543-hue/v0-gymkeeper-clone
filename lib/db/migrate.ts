@@ -15,6 +15,18 @@ async function runMigrations(): Promise<void> {
   await pool.query(
     "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS cardio_resistance text",
   );
+  for (const sql of [
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sleep_minutes integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sleep_quality integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS morning_pulse_delta integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS shoulder_pain integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS back_pain integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS energy integer",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS readiness_level text",
+    "ALTER TABLE logged_sets ADD COLUMN IF NOT EXISTS velocity text",
+    "ALTER TABLE logged_sets ADD COLUMN IF NOT EXISTS sticking_point text",
+  ])
+    await pool.query(sql);
   await pool.query(`CREATE TABLE IF NOT EXISTS tm_recalc_events (
     session_id integer PRIMARY KEY,
     target_macro integer NOT NULL,

@@ -2,6 +2,7 @@
 "use client";
 
 import type { LoggedSetLite } from "@/lib/recommend";
+import type { ReadinessInput } from "@/lib/training-logic";
 
 const PROGRAM_KEY = "gym:program";
 const OUTBOX_KEY = "gym:outbox";
@@ -52,7 +53,13 @@ export type ProgramCache = {
 };
 
 export type OutboxPayload =
-  | { kind: "start"; localKey: string; workoutId: number; startedAt: string }
+  | {
+      kind: "start";
+      localKey: string;
+      workoutId: number;
+      startedAt: string;
+      readiness?: ReadinessInput;
+    }
   | {
       kind: "set";
       sessionRef: number | string;
@@ -61,6 +68,8 @@ export type OutboxPayload =
       weight: number | null;
       reps: number | null;
       rir: number | null;
+      velocity: "fast" | "normal" | "slow";
+      stickingPoint: "chest" | "middle" | "lockout" | null;
     }
   | {
       kind: "finish";
@@ -197,13 +206,16 @@ export function getLocalSession(localKey: string) {
   return getLocalSessions()[localKey] ?? null;
 }
 
-export function createLocalSession(workoutId: number): string {
+export function createLocalSession(
+  workoutId: number,
+  readiness?: ReadinessInput,
+): string {
   const key = `local-${Date.now()}`;
   const startedAt = new Date().toISOString();
   const map = getLocalSessions();
   map[key] = { workoutId, startedAt };
   setLocalSessions(map);
-  pushOp({ kind: "start", localKey: key, workoutId, startedAt });
+  pushOp({ kind: "start", localKey: key, workoutId, startedAt, readiness });
   return key;
 }
 

@@ -63,6 +63,13 @@ export const sessions = pgTable("sessions", {
   cardioSpeed: text("cardio_speed"),
   /** Кардио: уровень сопротивления тренажёра (свободный текст, напр. "8") */
   cardioResistance: text("cardio_resistance"),
+  sleepMinutes: integer("sleep_minutes"),
+  sleepQuality: integer("sleep_quality"),
+  morningPulseDelta: integer("morning_pulse_delta"),
+  shoulderPain: integer("shoulder_pain"),
+  backPain: integer("back_pain"),
+  energy: integer("energy"),
+  readinessLevel: text("readiness_level"),
 });
 
 export const loggedSets = pgTable("logged_sets", {
@@ -73,6 +80,8 @@ export const loggedSets = pgTable("logged_sets", {
   weight: numeric("weight"),
   reps: integer("reps"),
   rir: integer("rir"),
+  velocity: text("velocity"),
+  stickingPoint: text("sticking_point"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

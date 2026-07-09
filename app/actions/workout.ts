@@ -14,8 +14,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { applyAmrapTmRecalc } from "@/lib/tm-recalc";
 import { ensureSchema } from "@/lib/db/migrate";
+import { readinessLevel, type ReadinessInput } from "@/lib/training-logic";
 
-export async function startSession(workoutId: number) {
+export async function startSession(
+  workoutId: number,
+  readiness?: ReadinessInput,
+) {
   await ensureSchema();
   // если уже есть активная сессия этой тренировки — продолжаем её
   const existing = await db
@@ -30,9 +34,23 @@ export async function startSession(workoutId: number) {
     redirect(`/session/${existing[0].id}`);
   }
 
+  const recent = readiness
+    ? []
+    : await db
+        .select({ readinessLevel: sessions.readinessLevel })
+        .from(sessions)
+        .orderBy(desc(sessions.startedAt))
+        .limit(20);
+  const inheritedReadiness =
+    recent.find((row) => row.readinessLevel)?.readinessLevel ?? null;
   const inserted = await db
     .insert(sessions)
-    .values({ workoutId })
+    .values({
+      workoutId,
+      ...(readiness
+        ? { ...readiness, readinessLevel: readinessLevel(readiness) }
+        : { readinessLevel: inheritedReadiness }),
+    })
     .onConflictDoNothing()
     .returning({ id: sessions.id });
 
@@ -58,6 +76,8 @@ export async function logSet(input: {
   weight: number | null;
   reps: number | null;
   rir: number | null;
+  velocity: "fast" | "normal" | "slow";
+  stickingPoint: "chest" | "middle" | "lockout" | null;
 }) {
   const inserted = await db
     .insert(loggedSets)
@@ -68,6 +88,8 @@ export async function logSet(input: {
       weight: input.weight != null ? String(input.weight) : null,
       reps: input.reps,
       rir: input.rir,
+      velocity: input.velocity,
+      stickingPoint: input.stickingPoint,
     })
     .returning({ id: loggedSets.id });
   revalidatePath(`/session/${input.sessionId}`);

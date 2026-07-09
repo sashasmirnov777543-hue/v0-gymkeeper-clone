@@ -7,11 +7,18 @@ import {
   applyAmrapTmRecalcInTransaction,
   type TmRecalcResult,
 } from "@/lib/tm-recalc";
+import { readinessLevel, type ReadinessInput } from "@/lib/training-logic";
 
 export const dynamic = "force-dynamic";
 
 type OpPayload =
-  | { kind: "start"; localKey: string; workoutId: number; startedAt: string }
+  | {
+      kind: "start";
+      localKey: string;
+      workoutId: number;
+      startedAt: string;
+      readiness?: ReadinessInput;
+    }
   | {
       kind: "set";
       sessionRef: number | string;
@@ -20,6 +27,8 @@ type OpPayload =
       weight: number | null;
       reps: number | null;
       rir: number | null;
+      velocity: "fast" | "normal" | "slow";
+      stickingPoint: "chest" | "middle" | "lockout" | null;
     }
   | {
       kind: "finish";
@@ -118,6 +127,12 @@ export async function POST(req: Request) {
               workoutId: op.workoutId,
               startedAt: new Date(op.startedAt),
               status: "active",
+              ...(op.readiness
+                ? {
+                    ...op.readiness,
+                    readinessLevel: readinessLevel(op.readiness),
+                  }
+                : {}),
             })
             .onConflictDoNothing()
             .returning({ id: sessions.id });
@@ -152,6 +167,8 @@ export async function POST(req: Request) {
               weight: op.weight != null ? String(op.weight) : null,
               reps: op.reps,
               rir: op.rir,
+              velocity: op.velocity,
+              stickingPoint: op.stickingPoint,
             })
             .returning({ id: loggedSets.id });
           result = { kind: "set", sessionId, setId: inserted.id };

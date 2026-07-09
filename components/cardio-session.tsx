@@ -1,41 +1,45 @@
-"use client"
+"use client";
 
-import { useEffect, useRef, useState } from "react"
-import Link from "next/link"
-import { useRouter } from "next/navigation"
-import { ArrowLeft, Pause, Play, Square } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { HeartRateBadge } from "@/components/heart-rate"
-import { useHeartRate, useWakeLock, averageBpmSince } from "@/lib/heart-rate"
-import { finishCardioSession } from "@/app/actions/workout"
-import { hrBeep, unlockAudio } from "@/lib/sound"
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Pause, Play, Square } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { HeartRateBadge } from "@/components/heart-rate";
+import { useHeartRate, useWakeLock, averageBpmSince } from "@/lib/heart-rate";
+import { finishCardioSession } from "@/app/actions/workout";
+import { hrBeep, unlockAudio } from "@/lib/sound";
+import { adjustedCardioMinutes, isMiniTaper } from "@/lib/training-logic";
 
-const MAXHR_KEY = "gym:max-hr"
+const MAXHR_KEY = "gym:max-hr";
 
 /** Границы пульсовых зон в % от макс. ЧСС */
 const ZONES = {
   Z1: [0.5, 0.6],
   Z2: [0.6, 0.7],
   Z3: [0.7, 0.8],
-} as const
+} as const;
 
 function fmt(secs: number): string {
-  const h = Math.floor(secs / 3600)
-  const m = Math.floor((secs % 3600) / 60)
-  const s = secs % 60
-  const mm = m.toString().padStart(2, "0")
-  const ss = s.toString().padStart(2, "0")
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const mm = m.toString().padStart(2, "0");
+  const ss = s.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
 /** Какая зона у текущего пульса */
-function zoneOf(bpm: number, maxHr: number): "ниже" | "Z1" | "Z2" | "Z3" | "выше" {
-  const r = bpm / maxHr
-  if (r < ZONES.Z1[0]) return "ниже"
-  if (r < ZONES.Z1[1]) return "Z1"
-  if (r < ZONES.Z2[1]) return "Z2"
-  if (r < ZONES.Z3[1]) return "Z3"
-  return "выше"
+function zoneOf(
+  bpm: number,
+  maxHr: number,
+): "ниже" | "Z1" | "Z2" | "Z3" | "выше" {
+  const r = bpm / maxHr;
+  if (r < ZONES.Z1[0]) return "ниже";
+  if (r < ZONES.Z1[1]) return "Z1";
+  if (r < ZONES.Z2[1]) return "Z2";
+  if (r < ZONES.Z3[1]) return "Z3";
+  return "выше";
 }
 
 export function CardioSession({
@@ -45,71 +49,82 @@ export function CardioSession({
   lastCardio,
 }: {
   session: {
-    id: number
-    status: string
-    speed?: string | null
-    resistance?: string | null
-  }
-  workout: { id: number; title: string; cardioZone: string | null; cardioMinutes: string | null }
-  cycle: { number: number; name: string }
+    id: number;
+    status: string;
+    speed?: string | null;
+    resistance?: string | null;
+    readinessLevel?: string | null;
+  };
+  workout: {
+    id: number;
+    title: string;
+    cardioZone: string | null;
+    cardioMinutes: string | null;
+  };
+  cycle: { number: number; name: string };
   lastCardio?: {
-    speed: string | null
-    resistance: string | null
-    durationSeconds: number | null
-    startedAt: string
-  } | null
+    speed: string | null;
+    resistance: string | null;
+    durationSeconds: number | null;
+    startedAt: string;
+  } | null;
 }) {
-  const router = useRouter()
-  const hr = useHeartRate()
-  const readOnly = session.status !== "active"
-  useWakeLock(!readOnly)
+  const router = useRouter();
+  const hr = useHeartRate();
+  const readOnly = session.status !== "active";
+  useWakeLock(!readOnly);
 
-  const [elapsed, setElapsed] = useState(0)
-  const [running, setRunning] = useState(true)
-  const [finishing, setFinishing] = useState(false)
-  const [maxHr, setMaxHr] = useState(185)
-  const [speed, setSpeed] = useState(session.speed ?? "")
-  const [resistance, setResistance] = useState(session.resistance ?? "")
-  const startedAtRef = useRef<number>(Date.now())
-  const lastZoneWarnRef = useRef<number>(0)
+  const [elapsed, setElapsed] = useState(0);
+  const [running, setRunning] = useState(true);
+  const [finishing, setFinishing] = useState(false);
+  const [maxHr, setMaxHr] = useState(185);
+  const [speed, setSpeed] = useState(session.speed ?? "");
+  const [resistance, setResistance] = useState(session.resistance ?? "");
+  const startedAtRef = useRef<number>(Date.now());
+  const lastZoneWarnRef = useRef<number>(0);
 
   // целевая зона из плана (берём первую, напр. "Z2" из "Z1–Z2")
-  const targetZone = (workout.cardioZone?.match(/Z\d/)?.[0] ?? "Z2") as keyof typeof ZONES
-  const targetRange = ZONES[targetZone] ?? ZONES.Z2
-  const targetLow = Math.round(targetRange[0] * maxHr)
-  const targetHigh = Math.round(targetRange[1] * maxHr)
+  const targetZone = (workout.cardioZone?.match(/Z\d/)?.[0] ??
+    "Z2") as keyof typeof ZONES;
+  const targetRange = ZONES[targetZone] ?? ZONES.Z2;
+  const targetLow = Math.round(targetRange[0] * maxHr);
+  const targetHigh = Math.round(targetRange[1] * maxHr);
+  const plannedMinutes = Number.parseInt(workout.cardioMinutes ?? "", 10);
+  const adjustedMinutes = Number.isFinite(plannedMinutes)
+    ? adjustedCardioMinutes(plannedMinutes, session.readinessLevel)
+    : null;
 
   useEffect(() => {
-    const saved = Number(localStorage.getItem(MAXHR_KEY))
-    if (saved > 0) setMaxHr(saved)
-  }, [])
+    const saved = Number(localStorage.getItem(MAXHR_KEY));
+    if (saved > 0) setMaxHr(saved);
+  }, []);
 
   useEffect(() => {
-    if (!running) return
-    const id = setInterval(() => setElapsed((e) => e + 1), 1000)
-    return () => clearInterval(id)
-  }, [running])
+    if (!running) return;
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [running]);
 
   // звук, если вышли из целевой зоны (не чаще раза в 25 сек)
   useEffect(() => {
-    if (hr.bpm == null || !running) return
-    const z = zoneOf(hr.bpm, maxHr)
-    const outOfZone = z !== targetZone && !(targetZone === "Z1" && z === "Z2")
+    if (hr.bpm == null || !running) return;
+    const z = zoneOf(hr.bpm, maxHr);
+    const outOfZone = z !== targetZone && !(targetZone === "Z1" && z === "Z2");
     if (outOfZone && Date.now() - lastZoneWarnRef.current > 25000) {
-      lastZoneWarnRef.current = Date.now()
-      hrBeep()
+      lastZoneWarnRef.current = Date.now();
+      hrBeep();
     }
-  }, [hr.bpm, running, maxHr, targetZone])
+  }, [hr.bpm, running, maxHr, targetZone]);
 
-  const currentZone = hr.bpm != null ? zoneOf(hr.bpm, maxHr) : null
+  const currentZone = hr.bpm != null ? zoneOf(hr.bpm, maxHr) : null;
   const inZone =
-    currentZone === targetZone || (targetZone === "Z1" && currentZone === "Z2")
+    currentZone === targetZone || (targetZone === "Z1" && currentZone === "Z2");
 
   const handleFinish = async () => {
-    if (finishing) return
-    setFinishing(true)
-    setRunning(false)
-    const avg = averageBpmSince(startedAtRef.current)
+    if (finishing) return;
+    setFinishing(true);
+    setRunning(false);
+    const avg = averageBpmSince(startedAtRef.current);
     try {
       await finishCardioSession({
         sessionId: session.id,
@@ -117,12 +132,12 @@ export function CardioSession({
         avgHr: avg,
         speed: speed.trim() || null,
         resistance: resistance.trim() || null,
-      })
+      });
     } catch {
       // офлайн — всё равно уходим, серверная запись не критична для кардио
     }
-    router.push("/history")
-  }
+    router.push("/history");
+  };
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col">
@@ -154,7 +169,9 @@ export function CardioSession({
           </span>
           {workout.cardioMinutes && workout.cardioMinutes !== "—" && (
             <span className="mt-1 text-sm text-muted-foreground">
-              Цель: {workout.cardioMinutes} мин · {workout.cardioZone}
+              Цель: {adjustedMinutes ?? workout.cardioMinutes} мин ·{" "}
+              {workout.cardioZone}
+              {isMiniTaper(session.readinessLevel) ? " · мини-тейпер" : ""}
             </span>
           )}
         </div>
@@ -162,7 +179,9 @@ export function CardioSession({
         {/* скорость и сопротивление */}
         <div className="w-full max-w-xs">
           {lastCardio &&
-          (lastCardio.speed || lastCardio.resistance || lastCardio.durationSeconds) ? (
+          (lastCardio.speed ||
+            lastCardio.resistance ||
+            lastCardio.durationSeconds) ? (
             <div className="mb-3 rounded-xl border border-border bg-card px-4 py-2.5">
               <p className="mb-1 text-xs font-medium text-muted-foreground">
                 Прошлая тренировка
@@ -170,7 +189,9 @@ export function CardioSession({
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                 <span>
                   Скорость:{" "}
-                  <span className="font-semibold">{lastCardio.speed || "—"}</span>
+                  <span className="font-semibold">
+                    {lastCardio.speed || "—"}
+                  </span>
                 </span>
                 <span>
                   Сопротивление:{" "}
@@ -251,7 +272,9 @@ export function CardioSession({
                   : "border-border bg-card"
             }`}
           >
-            <span className="font-mono text-5xl font-bold">{hr.bpm ?? "—"}</span>
+            <span className="font-mono text-5xl font-bold">
+              {hr.bpm ?? "—"}
+            </span>
             <span className="text-sm text-muted-foreground">уд/мин</span>
             <span
               className={`mt-1 rounded-full px-3 py-0.5 text-sm font-bold ${
@@ -288,9 +311,9 @@ export function CardioSession({
           <button
             type="button"
             onClick={() => {
-              const v = Math.max(140, maxHr - 1)
-              setMaxHr(v)
-              localStorage.setItem(MAXHR_KEY, String(v))
+              const v = Math.max(140, maxHr - 1);
+              setMaxHr(v);
+              localStorage.setItem(MAXHR_KEY, String(v));
             }}
             className="flex size-7 items-center justify-center rounded-md bg-secondary"
             aria-label="Уменьшить макс. ЧСС"
@@ -303,9 +326,9 @@ export function CardioSession({
           <button
             type="button"
             onClick={() => {
-              const v = Math.min(210, maxHr + 1)
-              setMaxHr(v)
-              localStorage.setItem(MAXHR_KEY, String(v))
+              const v = Math.min(210, maxHr + 1);
+              setMaxHr(v);
+              localStorage.setItem(MAXHR_KEY, String(v));
             }}
             className="flex size-7 items-center justify-center rounded-md bg-secondary"
             aria-label="Увеличить макс. ЧСС"
@@ -323,8 +346,8 @@ export function CardioSession({
               className="flex-1 bg-transparent"
               disabled={finishing}
               onClick={() => {
-                unlockAudio()
-                setRunning((r) => !r)
+                unlockAudio();
+                setRunning((r) => !r);
               }}
             >
               {running ? (
@@ -337,7 +360,11 @@ export function CardioSession({
                 </>
               )}
             </Button>
-            <Button className="flex-[2]" onClick={handleFinish} disabled={finishing}>
+            <Button
+              className="flex-[2]"
+              onClick={handleFinish}
+              disabled={finishing}
+            >
               <Square className="size-4" />
               {finishing ? "Завершаю…" : "Завершить кардио"}
             </Button>
@@ -345,5 +372,5 @@ export function CardioSession({
         </div>
       )}
     </main>
-  )
+  );
 }

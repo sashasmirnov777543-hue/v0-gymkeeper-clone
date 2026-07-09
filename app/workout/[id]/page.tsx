@@ -1,27 +1,22 @@
-import Link from "next/link"
-import { notFound } from "next/navigation"
-import { and, asc, eq } from "drizzle-orm"
-import { db } from "@/lib/db"
-import { ensureSchema } from "@/lib/db/migrate"
-import {
-  cycles,
-  sessions,
-  workoutExercises,
-  workouts,
-} from "@/lib/db/schema"
-import { getLastSetsByExerciseNames } from "@/app/actions/workout"
-import { BottomNav } from "@/components/bottom-nav"
-import { StartWorkoutButton } from "@/components/start-workout-button"
-import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
-import { ArrowLeft, Bike, Heart, History, Timer } from "lucide-react"
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { and, asc, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { ensureSchema } from "@/lib/db/migrate";
+import { cycles, sessions, workoutExercises, workouts } from "@/lib/db/schema";
+import { getLastSetsByExerciseNames } from "@/app/actions/workout";
+import { BottomNav } from "@/components/bottom-nav";
+import { StartWorkoutButton } from "@/components/start-workout-button";
+import { ExerciseGuideButton } from "@/components/exercise-guide-sheet";
+import { ArrowLeft, Bike, Heart, History, Timer } from "lucide-react";
 
-export const dynamic = "force-dynamic"
+export const dynamic = "force-dynamic";
 
 function fmtRest(sec: number): string {
-  if (sec < 60) return `${sec} с`
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return s ? `${m} мин ${s} с` : `${m} мин`
+  if (sec < 60) return `${sec} с`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s ? `${m} мин ${s} с` : `${m} мин`;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -34,26 +29,26 @@ function Stat({ label, value }: { label: string; value: string }) {
         {value}
       </span>
     </div>
-  )
+  );
 }
 
 export default async function WorkoutPage({
   params,
 }: {
-  params: Promise<{ id: string }>
+  params: Promise<{ id: string }>;
 }) {
-  const { id } = await params
-  const workoutId = Number.parseInt(id, 10)
-  if (Number.isNaN(workoutId)) notFound()
+  const { id } = await params;
+  const workoutId = Number.parseInt(id, 10);
+  if (Number.isNaN(workoutId)) notFound();
 
-  await ensureSchema()
+  await ensureSchema();
 
   const [workout] = await db
     .select()
     .from(workouts)
     .where(eq(workouts.id, workoutId))
-    .limit(1)
-  if (!workout) notFound()
+    .limit(1);
+  if (!workout) notFound();
 
   const [[cycle], exercises, active] = await Promise.all([
     db.select().from(cycles).where(eq(cycles.id, workout.cycleId)).limit(1),
@@ -69,15 +64,15 @@ export default async function WorkoutPage({
         and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")),
       )
       .limit(1),
-  ])
+  ]);
 
   const lastByName =
     workout.kind !== "cardio" && exercises.length > 0
       ? await getLastSetsByExerciseNames(exercises.map((e) => e.name))
-      : {}
-  const first = exercises[0]
-  const firstLast = first ? lastByName[first.name] ?? [] : []
-  const restExercises = exercises.slice(1)
+      : {};
+  const first = exercises[0];
+  const firstLast = first ? (lastByName[first.name] ?? []) : [];
+  const restExercises = exercises.slice(1);
 
   return (
     <div className="min-h-screen bg-background pb-32">
@@ -97,7 +92,9 @@ export default async function WorkoutPage({
             {workout.title}
           </h1>
           {workout.notes && (
-            <p className="mt-1 text-sm text-muted-foreground">{workout.notes}</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {workout.notes}
+            </p>
           )}
         </div>
       </header>
@@ -121,18 +118,24 @@ export default async function WorkoutPage({
               </div>
             </div>
             <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3">
-              <Heart className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+              <Heart
+                className="mt-0.5 size-5 shrink-0 text-primary"
+                aria-hidden="true"
+              />
               <p className="text-pretty text-sm leading-relaxed text-muted-foreground">
-                Подключите пульс с часов HUAWEI WATCH GT 5 PRO (на часах: тренировка →
-                Трансляция пульса). Приложение покажет вашу зону и подаст сигнал, если
-                выйдете за её пределы.
+                Подключите пульс с часов HUAWEI WATCH GT 5 PRO (на часах:
+                тренировка → Трансляция пульса). Приложение покажет вашу зону и
+                подаст сигнал, если выйдете за её пределы.
               </p>
             </div>
             <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3">
-              <Timer className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+              <Timer
+                className="mt-0.5 size-5 shrink-0 text-primary"
+                aria-hidden="true"
+              />
               <p className="text-pretty text-sm leading-relaxed text-muted-foreground">
-                Секундомер фиксирует длительность, а после завершения средний пульс и
-                время сохранятся в историю.
+                Секундомер фиксирует длительность, а после завершения средний
+                пульс и время сохранятся в историю.
               </p>
             </div>
             {cycle?.notes && (
@@ -173,7 +176,10 @@ export default async function WorkoutPage({
                       )}
                       {first.tempo && <Stat label="Темп" value={first.tempo} />}
                       {first.restSeconds ? (
-                        <Stat label="Отдых" value={fmtRest(first.restSeconds)} />
+                        <Stat
+                          label="Отдых"
+                          value={fmtRest(first.restSeconds)}
+                        />
                       ) : null}
                       {first.targetRirMin != null && (
                         <Stat
@@ -210,7 +216,8 @@ export default async function WorkoutPage({
                               #{i + 1}
                             </span>
                             <span className="font-medium">
-                              {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
+                              {s.weight != null ? `${s.weight} кг` : "—"} ×{" "}
+                              {s.reps ?? "—"}
                             </span>
                             <span className="text-xs text-muted-foreground">
                               RIR {s.rir ?? "—"}
@@ -281,6 +288,7 @@ export default async function WorkoutPage({
         <div className="mx-auto max-w-lg px-4 pb-2">
           <StartWorkoutButton
             workoutId={workoutId}
+            workoutKind={workout.kind}
             hasActive={active.length > 0}
             activeSessionId={active[0]?.id}
           />
@@ -289,5 +297,5 @@ export default async function WorkoutPage({
 
       <BottomNav />
     </div>
-  )
+  );
 }
