@@ -1,10 +1,10 @@
-"use client"
+"use client";
 
 // feat: пошаговый режим — одно упражнение на экран (редизайн)
 
-import { useMemo, useState, useTransition } from "react"
-import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
@@ -16,72 +16,72 @@ import {
   Trash2,
   TrendingDown,
   TrendingUp,
-} from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { ExerciseGuideButton } from "@/components/exercise-guide-sheet"
-import { ExerciseHistory } from "@/components/exercise-history"
-import { HeartRateBadge } from "@/components/heart-rate"
-import { RestTimer } from "@/components/rest-timer"
-import { SessionNotes } from "@/components/session-notes"
-import { WarmupPlates } from "@/components/warmup-plates"
-import { MyorepsPanel } from "@/components/myoreps-panel"
-import { trainingMaxFromAmrap } from "@/lib/training-logic"
-import { useWakeLock } from "@/lib/heart-rate"
-import { unlockAudio } from "@/lib/sound"
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ExerciseGuideButton } from "@/components/exercise-guide-sheet";
+import { ExerciseHistory } from "@/components/exercise-history";
+import { HeartRateBadge } from "@/components/heart-rate";
+import { RestTimer } from "@/components/rest-timer";
+import { SessionNotes } from "@/components/session-notes";
+import { WarmupPlates } from "@/components/warmup-plates";
+import { MyorepsPanel } from "@/components/myoreps-panel";
+import { trainingMaxFromAmrap } from "@/lib/training-logic";
+import { useWakeLock } from "@/lib/heart-rate";
+import { unlockAudio } from "@/lib/sound";
 import {
   cancelSession,
   deleteSet,
   finishSession,
   logSet,
   updateSet,
-} from "@/app/actions/workout"
+} from "@/app/actions/workout";
 import {
   cancelLocalSession,
   finishLocalSession,
   pushOp,
   saveLocalSets,
-} from "@/lib/offline"
+} from "@/lib/offline";
 import {
   isPercentPrescribed,
   parsePrescribedWeight,
   recommendWeight,
   type LoggedSetLite,
   type Recommendation,
-} from "@/lib/recommend"
+} from "@/lib/recommend";
 
 type Exercise = {
-  id: number
-  name: string
-  weightText: string | null
-  targetReps: string | null
-  targetSets: string | null
-  targetRirMin: number | null
-  targetRirMax: number | null
-  comment: string | null
-  restSeconds: number | null
-  tempo?: string | null
-}
+  id: number;
+  name: string;
+  weightText: string | null;
+  targetReps: string | null;
+  targetSets: string | null;
+  targetRirMin: number | null;
+  targetRirMax: number | null;
+  comment: string | null;
+  restSeconds: number | null;
+  tempo?: string | null;
+};
 
 type SetRow = {
-  id: number
-  workoutExerciseId: number
-  setNumber: number
-  weight: number | null
-  reps: number | null
-  rir: number | null
-}
+  id: number;
+  workoutExerciseId: number;
+  setNumber: number;
+  weight: number | null;
+  reps: number | null;
+  rir: number | null;
+};
 
 function fmtRest(sec: number): string {
-  if (sec < 60) return `${sec} с`
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return s ? `${m} мин ${s} с` : `${m} мин`
+  if (sec < 60) return `${sec} с`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s ? `${m} мин ${s} с` : `${m} мин`;
 }
 
 function parseFirstInt(text: string | null): number | null {
-  if (!text) return null
-  const m = text.match(/\d+/)
-  return m ? Number.parseInt(m[0], 10) : null
+  if (!text) return null;
+  const m = text.match(/\d+/);
+  return m ? Number.parseInt(m[0], 10) : null;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -94,7 +94,7 @@ function Stat({ label, value }: { label: string; value: string }) {
         {value}
       </span>
     </div>
-  )
+  );
 }
 
 export function SessionLogger({
@@ -106,69 +106,82 @@ export function SessionLogger({
   lastSetsByName,
   offlineKey,
 }: {
-  session: { id: number; status: string; startedAt: string; notes?: string | null }
-  workout: { id: number; title: string }
-  cycle: { number: number; name: string; block: string }
-  exercises: Exercise[]
-  initialSets: SetRow[]
-  lastSetsByName: Record<string, LoggedSetLite[]>
+  session: {
+    id: number;
+    status: string;
+    startedAt: string;
+    notes?: string | null;
+  };
+  workout: { id: number; title: string };
+  cycle: { number: number; name: string; block: string };
+  exercises: Exercise[];
+  initialSets: SetRow[];
+  lastSetsByName: Record<string, LoggedSetLite[]>;
   /** Ключ локальной (офлайн) сессии — все операции идут в очередь синхронизации */
-  offlineKey?: string
+  offlineKey?: string;
 }) {
-  const router = useRouter()
-  const [sets, setSets] = useState<SetRow[]>(initialSets)
-  const [idx, setIdx] = useState(0)
-  const [isPending, startTransition] = useTransition()
+  const router = useRouter();
+  const [sets, setSets] = useState<SetRow[]>(initialSets);
+  const [idx, setIdx] = useState(0);
+  const [isPending, startTransition] = useTransition();
   const [rest, setRest] = useState<{
-    seconds: number
-    label: string
-    rec: Recommendation
-  } | null>(null)
-  const readOnly = session.status !== "active"
+    seconds: number;
+    label: string;
+    rec: Recommendation;
+  } | null>(null);
+  const readOnly = session.status !== "active";
 
   // экран не гаснет, пока тренировка активна
-  useWakeLock(!readOnly)
+  useWakeLock(!readOnly);
 
   // ссылка на сессию для очереди: локальный ключ или реальный id
-  const sessionRef: number | string = offlineKey ?? session.id
+  const sessionRef: number | string = offlineKey ?? session.id;
 
   const persistLocal = (next: SetRow[]) => {
-    if (offlineKey) saveLocalSets(offlineKey, next)
-  }
+    if (offlineKey) saveLocalSets(offlineKey, next);
+  };
 
   const handleFinish = () => {
-    let proposedTm: number | undefined
+    let proposedTm: number | undefined;
     const amrapExerciseIds = new Set(
       exercises
-        .filter((exercise) => exercise.name.toLocaleLowerCase("ru-RU").includes("amrap"))
+        .filter((exercise) =>
+          exercise.name.toLocaleLowerCase("ru-RU").includes("amrap"),
+        )
         .map((exercise) => exercise.id),
-    )
+    );
     const candidates = sets
-      .filter((set) => amrapExerciseIds.has(set.workoutExerciseId) && set.weight && set.reps)
-      .map((set) => ({ set, calc: trainingMaxFromAmrap(set.weight as number, set.reps as number) }))
-      .sort((a, b) => b.calc.e1rm - a.calc.e1rm)
+      .filter(
+        (set) =>
+          amrapExerciseIds.has(set.workoutExerciseId) && set.weight && set.reps,
+      )
+      .map((set) => ({
+        set,
+        calc: trainingMaxFromAmrap(set.weight as number, set.reps as number),
+      }))
+      .sort((a, b) => b.calc.e1rm - a.calc.e1rm);
     if (candidates.length > 0) {
-      const best = candidates[0]
+      const best = candidates[0];
       const entered = prompt(
         `AMRAP ${best.set.weight} кг × ${best.set.reps}\ne1RM: ${best.calc.e1rm.toFixed(1)} кг\nTM по правилу 0,90: ${best.calc.tm} кг\n\nПодтверди или измени TM:`,
         String(best.calc.tm),
-      )
-      if (entered == null) return
-      const parsed = Number(entered.replace(",", "."))
+      );
+      if (entered == null) return;
+      const parsed = Number(entered.replace(",", "."));
       if (!Number.isFinite(parsed) || parsed <= 0) {
-        alert("TM должен быть положительным числом")
-        return
+        alert("TM должен быть положительным числом");
+        return;
       }
-      proposedTm = parsed
+      proposedTm = parsed;
     }
     if (offlineKey) {
-      finishLocalSession(offlineKey, proposedTm)
-      router.push("/history")
-      return
+      finishLocalSession(offlineKey, proposedTm);
+      router.push("/history");
+      return;
     }
     startTransition(async () => {
       try {
-        await finishSession(session.id, proposedTm)
+        await finishSession(session.id, proposedTm);
       } catch (err) {
         // офлайн: ставим в очередь и уходим
         if (isOffline(err)) {
@@ -177,51 +190,51 @@ export function SessionLogger({
             sessionRef,
             finishedAt: new Date().toISOString(),
             proposedTm,
-          })
-          router.push("/history")
+          });
+          router.push("/history");
         } else {
-          throw err
+          throw err;
         }
       }
-    })
-  }
+    });
+  };
 
   const handleCancel = () => {
     if (offlineKey) {
-      cancelLocalSession(offlineKey)
-      router.push("/")
-      return
+      cancelLocalSession(offlineKey);
+      router.push("/");
+      return;
     }
     startTransition(async () => {
       try {
-        await cancelSession(session.id)
+        await cancelSession(session.id);
       } catch (err) {
         if (isOffline(err)) {
-          pushOp({ kind: "cancel", sessionRef })
-          router.push("/")
+          pushOp({ kind: "cancel", sessionRef });
+          router.push("/");
         } else {
-          throw err
+          throw err;
         }
       }
-    })
-  }
+    });
+  };
 
   const setsByExercise = useMemo(() => {
-    const map: Record<number, SetRow[]> = {}
+    const map: Record<number, SetRow[]> = {};
     for (const s of sets) {
-      ;(map[s.workoutExerciseId] ??= []).push(s)
+      (map[s.workoutExerciseId] ??= []).push(s);
     }
-    return map
-  }, [sets])
+    return map;
+  }, [sets]);
 
-  const totalLogged = sets.length
-  const safeIdx = Math.min(Math.max(idx, 0), Math.max(0, exercises.length - 1))
-  const current = exercises[safeIdx]
-  const isFirst = safeIdx <= 0
-  const isLast = safeIdx >= exercises.length - 1
+  const totalLogged = sets.length;
+  const safeIdx = Math.min(Math.max(idx, 0), Math.max(0, exercises.length - 1));
+  const current = exercises[safeIdx];
+  const isFirst = safeIdx <= 0;
+  const isLast = safeIdx >= exercises.length - 1;
 
-  const goPrev = () => setIdx((i) => Math.max(0, i - 1))
-  const goNext = () => setIdx((i) => Math.min(exercises.length - 1, i + 1))
+  const goPrev = () => setIdx((i) => Math.max(0, i - 1));
+  const goNext = () => setIdx((i) => Math.min(exercises.length - 1, i + 1));
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col pb-36">
@@ -238,7 +251,9 @@ export function SessionLogger({
             <p className="text-xs text-muted-foreground">
               Цикл {cycle.number} — {cycle.name}
             </p>
-            <h1 className="truncate text-base font-semibold">{workout.title}</h1>
+            <h1 className="truncate text-base font-semibold">
+              {workout.title}
+            </h1>
           </div>
           <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
             {totalLogged} подх.
@@ -248,7 +263,7 @@ export function SessionLogger({
         {exercises.length > 1 && (
           <div className="mt-2 flex items-center gap-1" aria-hidden="true">
             {exercises.map((ex, i) => {
-              const has = (setsByExercise[ex.id]?.length ?? 0) > 0
+              const has = (setsByExercise[ex.id]?.length ?? 0) > 0;
               return (
                 <span
                   key={ex.id}
@@ -260,7 +275,7 @@ export function SessionLogger({
                         : "bg-secondary"
                   }`}
                 />
-              )
+              );
             })}
           </div>
         )}
@@ -277,9 +292,9 @@ export function SessionLogger({
           readOnly={readOnly}
           onLogged={(row) =>
             setSets((prev) => {
-              const next = [...prev, row]
-              persistLocal(next)
-              return next
+              const next = [...prev, row];
+              persistLocal(next);
+              return next;
             })
           }
           onReplaceId={(tempId, realId) =>
@@ -289,18 +304,18 @@ export function SessionLogger({
           }
           onDeleted={(setId) =>
             setSets((prev) => {
-              const next = prev.filter((s) => s.id !== setId)
-              persistLocal(next)
-              return next
+              const next = prev.filter((s) => s.id !== setId);
+              persistLocal(next);
+              return next;
             })
           }
           onUpdated={(setId, weight, reps, rir) =>
             setSets((prev) => {
               const next = prev.map((s) =>
                 s.id === setId ? { ...s, weight, reps, rir } : s,
-              )
-              persistLocal(next)
-              return next
+              );
+              persistLocal(next);
+              return next;
             })
           }
           sessionRef={sessionRef}
@@ -341,8 +356,7 @@ export function SessionLogger({
             {readOnly ? (
               isLast ? (
                 <Button render={<Link href="/history" />} className="flex-[2]">
-                  <History className="size-4" />
-                  К истории
+                  <History className="size-4" />К истории
                 </Button>
               ) : (
                 <Button className="flex-[2]" onClick={goNext}>
@@ -376,7 +390,7 @@ export function SessionLogger({
                     "Отменить тренировку? Все записанные подходы будут удалены.",
                   )
                 ) {
-                  handleCancel()
+                  handleCancel();
                 }
               }}
               className="mt-2 w-full text-center text-xs text-muted-foreground hover:text-destructive"
@@ -396,7 +410,7 @@ export function SessionLogger({
         />
       )}
     </main>
-  )
+  );
 }
 
 function CurrentExercise({
@@ -417,32 +431,32 @@ function CurrentExercise({
   cycleNumber,
   block,
 }: {
-  exercise: Exercise
-  position: number
-  total: number
-  doneSets: SetRow[]
-  lastTimeSets: LoggedSetLite[]
-  readOnly: boolean
-  onLogged: (row: SetRow) => void
-  onReplaceId: (tempId: number, realId: number) => void
-  onDeleted: (setId: number) => void
+  exercise: Exercise;
+  position: number;
+  total: number;
+  doneSets: SetRow[];
+  lastTimeSets: LoggedSetLite[];
+  readOnly: boolean;
+  onLogged: (row: SetRow) => void;
+  onReplaceId: (tempId: number, realId: number) => void;
+  onDeleted: (setId: number) => void;
   onUpdated: (
     setId: number,
     weight: number | null,
     reps: number | null,
     rir: number | null,
-  ) => void
-  sessionRef: number | string
-  offline: boolean
-  onRest: (seconds: number, label: string, rec: Recommendation) => void
-  onAdvance?: () => void
-  cycleNumber: number
-  block: string
+  ) => void;
+  sessionRef: number | string;
+  offline: boolean;
+  onRest: (seconds: number, label: string, rec: Recommendation) => void;
+  onAdvance?: () => void;
+  cycleNumber: number;
+  block: string;
 }) {
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const prescribed = parsePrescribedWeight(exercise.weightText)
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const prescribed = parsePrescribedWeight(exercise.weightText);
   // вес задан процентом от ТМ -> нагрузка фиксирована программой, вверх не гоним
-  const fixedLoad = isPercentPrescribed(exercise.weightText)
+  const fixedLoad = isPercentPrescribed(exercise.weightText);
 
   // Рекомендация: сперва по подходам ТЕКУЩЕЙ сессии, иначе по прошлой тренировке
   const rec: Recommendation = useMemo(() => {
@@ -450,23 +464,29 @@ function CurrentExercise({
       weight: s.weight,
       reps: s.reps,
       rir: s.rir,
-    }))
+    }));
     const source = current.some((s) => s.rir != null && s.weight != null)
       ? current
-      : lastTimeSets
+      : lastTimeSets;
     return recommendWeight(
       source,
       exercise.targetRirMin,
       exercise.targetRirMax,
       prescribed,
       { fixedLoad },
-    )
-  }, [doneSets, lastTimeSets, exercise.targetRirMin, exercise.targetRirMax, prescribed, fixedLoad])
+    );
+  }, [
+    doneSets,
+    lastTimeSets,
+    exercise.targetRirMin,
+    exercise.targetRirMax,
+    prescribed,
+    fixedLoad,
+  ]);
 
-  const hasTargets = Boolean(exercise.weightText || exercise.targetReps)
-  const targetSetsNum = parseFirstInt(exercise.targetSets)
-  const allSetsDone =
-    targetSetsNum != null && doneSets.length >= targetSetsNum
+  const hasTargets = Boolean(exercise.weightText || exercise.targetReps);
+  const targetSetsNum = parseFirstInt(exercise.targetSets);
+  const allSetsDone = targetSetsNum != null && doneSets.length >= targetSetsNum;
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4">
@@ -546,7 +566,8 @@ function CurrentExercise({
                       #{i + 1}
                     </span>
                     <span className="font-medium">
-                      {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
+                      {s.weight != null ? `${s.weight} кг` : "—"} ×{" "}
+                      {s.reps ?? "—"}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       RIR {s.rir ?? "—"}
@@ -581,7 +602,8 @@ function CurrentExercise({
             <Check className="size-4 shrink-0" />
           )}
           <span>
-            <strong className="font-semibold">{rec.weight} кг</strong> — {rec.reason}
+            <strong className="font-semibold">{rec.weight} кг</strong> —{" "}
+            {rec.reason}
           </span>
         </div>
       )}
@@ -590,7 +612,9 @@ function CurrentExercise({
         <div>
           <p className="mb-1.5 text-xs font-medium text-muted-foreground">
             Выполнено
-            {targetSetsNum != null ? ` · ${doneSets.length} из ${targetSetsNum}` : ""}
+            {targetSetsNum != null
+              ? ` · ${doneSets.length} из ${targetSetsNum}`
+              : ""}
           </p>
           <ul className="flex flex-col gap-1.5">
             {doneSets.map((s, i) =>
@@ -603,16 +627,17 @@ function CurrentExercise({
                     set={s}
                     onCancel={() => setEditingId(null)}
                     onSave={(weight, reps, rir) => {
-                      setEditingId(null)
-                      onUpdated(s.id, weight, reps, rir)
-                      if (offline || s.id < 0) return
+                      setEditingId(null);
+                      onUpdated(s.id, weight, reps, rir);
+                      if (offline || s.id < 0) return;
                       updateSet({
                         setId: s.id,
-                        sessionId: typeof sessionRef === "number" ? sessionRef : 0,
+                        sessionId:
+                          typeof sessionRef === "number" ? sessionRef : 0,
                         weight,
                         reps,
                         rir,
-                      }).catch(() => {})
+                      }).catch(() => {});
                     }}
                   />
                 </li>
@@ -628,7 +653,8 @@ function CurrentExercise({
                     #{i + 1}
                   </span>
                   <span className="flex-1 text-center font-medium text-muted-foreground line-through decoration-2">
-                    {s.weight != null ? `${s.weight} кг` : "—"} × {s.reps ?? "—"}
+                    {s.weight != null ? `${s.weight} кг` : "—"} ×{" "}
+                    {s.reps ?? "—"}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     RIR {s.rir ?? "—"}
@@ -648,16 +674,23 @@ function CurrentExercise({
                         className="flex size-7 items-center justify-center rounded text-muted-foreground hover:text-destructive"
                         aria-label={`Удалить подход ${i + 1}`}
                         onClick={() => {
-                          onDeleted(s.id)
-                          if (offline || s.id < 0) return
+                          if (
+                            !confirm(
+                              `Удалить подход ${i + 1}? Это действие нельзя отменить.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          onDeleted(s.id);
+                          if (offline || s.id < 0) return;
                           deleteSet(
                             s.id,
                             typeof sessionRef === "number" ? sessionRef : 0,
                           ).catch((err) => {
                             if (isOffline(err)) {
-                              pushOp({ kind: "deleteSet", setId: s.id })
+                              pushOp({ kind: "deleteSet", setId: s.id });
                             }
-                          })
+                          });
                         }}
                       >
                         <Trash2 className="size-4" />
@@ -671,7 +704,9 @@ function CurrentExercise({
         </div>
       )}
 
-      {hasTargets && !offline && <ExerciseHistory exerciseName={exercise.name} />}
+      {hasTargets && !offline && (
+        <ExerciseHistory exerciseName={exercise.name} />
+      )}
 
       {!readOnly && doneSets.length === 0 && hasTargets && (
         <WarmupPlates workingWeight={rec?.weight ?? prescribed} />
@@ -683,8 +718,8 @@ function CurrentExercise({
           defaultWeight={rec?.weight ?? prescribed}
           targetRirMin={exercise.targetRirMin}
           onSubmit={async (weight, reps, rir) => {
-            const tempId = -Date.now()
-            const setNumber = doneSets.length + 1
+            const tempId = -Date.now();
+            const setNumber = doneSets.length + 1;
             const row: SetRow = {
               id: tempId,
               workoutExerciseId: exercise.id,
@@ -692,8 +727,8 @@ function CurrentExercise({
               weight,
               reps,
               rir,
-            }
-            onLogged(row)
+            };
+            onLogged(row);
 
             // запускаем таймер отдыха для этого упражнения
             if (exercise.restSeconds && exercise.restSeconds > 0) {
@@ -710,8 +745,8 @@ function CurrentExercise({
                 exercise.targetRirMax,
                 prescribed,
                 { fixedLoad },
-              )
-              onRest(exercise.restSeconds, `Отдых · ${exercise.name}`, nextRec)
+              );
+              onRest(exercise.restSeconds, `Отдых · ${exercise.name}`, nextRec);
             }
 
             // офлайн-сессия: только очередь, без сервера
@@ -724,8 +759,8 @@ function CurrentExercise({
                 weight,
                 reps,
                 rir,
-              })
-              return
+              });
+              return;
             }
 
             try {
@@ -736,8 +771,8 @@ function CurrentExercise({
                 weight,
                 reps,
                 rir,
-              })
-              if (inserted?.id != null) onReplaceId(tempId, inserted.id)
+              });
+              if (inserted?.id != null) onReplaceId(tempId, inserted.id);
             } catch (err) {
               if (isOffline(err)) {
                 pushOp({
@@ -748,9 +783,9 @@ function CurrentExercise({
                   weight,
                   reps,
                   rir,
-                })
+                });
               } else {
-                throw err
+                throw err;
               }
             }
           }}
@@ -768,13 +803,13 @@ function CurrentExercise({
         </Button>
       )}
     </div>
-  )
+  );
 }
 
 /** Ошибка вызвана отсутствием сети (а не логикой сервера)? */
 function isOffline(err: unknown): boolean {
-  if (typeof navigator !== "undefined" && !navigator.onLine) return true
-  return err instanceof TypeError
+  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
+  return err instanceof TypeError;
 }
 
 function SetForm({
@@ -782,39 +817,52 @@ function SetForm({
   targetRirMin,
   onSubmit,
 }: {
-  defaultWeight: number | null
-  targetRirMin: number | null
-  onSubmit: (weight: number | null, reps: number | null, rir: number | null) => Promise<void>
+  defaultWeight: number | null;
+  targetRirMin: number | null;
+  onSubmit: (
+    weight: number | null,
+    reps: number | null,
+    rir: number | null,
+  ) => Promise<void>;
 }) {
   const [weight, setWeight] = useState<string>(
     defaultWeight != null ? String(defaultWeight) : "",
-  )
-  const [reps, setReps] = useState<string>("")
-  const [rir, setRir] = useState<number | null>(targetRirMin)
-  const [saving, setSaving] = useState(false)
+  );
+  const [reps, setReps] = useState<string>("");
+  const [rir, setRir] = useState<number | null>(targetRirMin);
+  const [saving, setSaving] = useState(false);
 
   const bump = (delta: number) => {
-    const cur = Number.parseFloat(weight.replace(",", ".")) || 0
-    const next = Math.max(0, Math.round((cur + delta) * 10) / 10)
-    setWeight(String(next))
-  }
+    const cur = Number.parseFloat(weight.replace(",", ".")) || 0;
+    const next = Math.max(0, Math.round((cur + delta) * 10) / 10);
+    setWeight(String(next));
+  };
 
   return (
     <form
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
       onSubmit={async (e) => {
-        e.preventDefault()
-        unlockAudio()
-        setSaving(true)
-        const w = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null
-        const r = reps.trim() ? Number.parseInt(reps, 10) : null
-        await onSubmit(Number.isNaN(w as number) ? null : w, Number.isNaN(r as number) ? null : r, rir)
-        setSaving(false)
+        e.preventDefault();
+        unlockAudio();
+        setSaving(true);
+        const w = weight.trim()
+          ? Number.parseFloat(weight.replace(",", "."))
+          : null;
+        const r = reps.trim() ? Number.parseInt(reps, 10) : null;
+        await onSubmit(
+          Number.isNaN(w as number) ? null : w,
+          Number.isNaN(r as number) ? null : r,
+          rir,
+        );
+        setSaving(false);
       }}
     >
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor={`w-${targetRirMin}-weight`} className="text-xs text-muted-foreground">
+          <label
+            htmlFor={`w-${targetRirMin}-weight`}
+            className="text-xs text-muted-foreground"
+          >
             Вес, кг
           </label>
           <div className="flex items-center gap-1.5">
@@ -845,7 +893,10 @@ function SetForm({
           </div>
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor={`w-${targetRirMin}-reps`} className="text-xs text-muted-foreground">
+          <label
+            htmlFor={`w-${targetRirMin}-reps`}
+            className="text-xs text-muted-foreground"
+          >
             Повторения
           </label>
           <input
@@ -887,7 +938,7 @@ function SetForm({
         {saving ? "Сохраняю..." : "Закончить подход"}
       </Button>
     </form>
-  )
+  );
 }
 
 /** Инлайн-редактирование записанного подхода */
@@ -896,31 +947,42 @@ function EditSetForm({
   onSave,
   onCancel,
 }: {
-  set: SetRow
-  onSave: (weight: number | null, reps: number | null, rir: number | null) => void
-  onCancel: () => void
+  set: SetRow;
+  onSave: (
+    weight: number | null,
+    reps: number | null,
+    rir: number | null,
+  ) => void;
+  onCancel: () => void;
 }) {
-  const [weight, setWeight] = useState(set.weight != null ? String(set.weight) : "")
-  const [reps, setReps] = useState(set.reps != null ? String(set.reps) : "")
-  const [rir, setRir] = useState<number | null>(set.rir)
+  const [weight, setWeight] = useState(
+    set.weight != null ? String(set.weight) : "",
+  );
+  const [reps, setReps] = useState(set.reps != null ? String(set.reps) : "");
+  const [rir, setRir] = useState<number | null>(set.rir);
 
   return (
     <form
       className="flex flex-col gap-2"
       onSubmit={(e) => {
-        e.preventDefault()
-        const w = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null
-        const r = reps.trim() ? Number.parseInt(reps, 10) : null
+        e.preventDefault();
+        const w = weight.trim()
+          ? Number.parseFloat(weight.replace(",", "."))
+          : null;
+        const r = reps.trim() ? Number.parseInt(reps, 10) : null;
         onSave(
           Number.isNaN(w as number) ? null : w,
           Number.isNaN(r as number) ? null : r,
           rir,
-        )
+        );
       }}
     >
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1">
-          <label htmlFor={`edit-w-${set.id}`} className="text-xs text-muted-foreground">
+          <label
+            htmlFor={`edit-w-${set.id}`}
+            className="text-xs text-muted-foreground"
+          >
             Вес, кг
           </label>
           <input
@@ -932,7 +994,10 @@ function EditSetForm({
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor={`edit-r-${set.id}`} className="text-xs text-muted-foreground">
+          <label
+            htmlFor={`edit-r-${set.id}`}
+            className="text-xs text-muted-foreground"
+          >
             Повторения
           </label>
           <input
@@ -963,7 +1028,13 @@ function EditSetForm({
         ))}
       </div>
       <div className="flex gap-2">
-        <Button type="button" variant="outline" size="sm" className="flex-1 bg-transparent" onClick={onCancel}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="flex-1 bg-transparent"
+          onClick={onCancel}
+        >
           Отмена
         </Button>
         <Button type="submit" size="sm" className="flex-[2]">
@@ -971,5 +1042,5 @@ function EditSetForm({
         </Button>
       </div>
     </form>
-  )
+  );
 }

@@ -5,7 +5,8 @@ import {
   integer,
   numeric,
   timestamp,
-} from "drizzle-orm/pg-core"
+  jsonb,
+} from "drizzle-orm/pg-core";
 
 export const cycles = pgTable("cycles", {
   id: serial("id").primaryKey(),
@@ -16,7 +17,7 @@ export const cycles = pgTable("cycles", {
   sortOrder: integer("sort_order").notNull().default(0),
   /** Программный блок: 'v9' — силовой жимовой, 'h2' — гипертрофия/ОФП (база перед V9) */
   block: text("block").notNull().default("v9"),
-})
+});
 
 export const workouts = pgTable("workouts", {
   id: serial("id").primaryKey(),
@@ -28,7 +29,7 @@ export const workouts = pgTable("workouts", {
   kind: text("kind").notNull().default("strength"),
   cardioZone: text("cardio_zone"),
   cardioMinutes: text("cardio_minutes"),
-})
+});
 
 export const workoutExercises = pgTable("workout_exercises", {
   id: serial("id").primaryKey(),
@@ -45,7 +46,7 @@ export const workoutExercises = pgTable("workout_exercises", {
   tempo: text("tempo"),
   comment: text("comment"),
   restSeconds: integer("rest_seconds"),
-})
+});
 
 export const sessions = pgTable("sessions", {
   id: serial("id").primaryKey(),
@@ -62,7 +63,7 @@ export const sessions = pgTable("sessions", {
   cardioSpeed: text("cardio_speed"),
   /** Кардио: уровень сопротивления тренажёра (свободный текст, напр. "8") */
   cardioResistance: text("cardio_resistance"),
-})
+});
 
 export const loggedSets = pgTable("logged_sets", {
   id: serial("id").primaryKey(),
@@ -75,12 +76,12 @@ export const loggedSets = pgTable("logged_sets", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-})
+});
 
 export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
-})
+});
 
 export const tmRecalcEvents = pgTable("tm_recalc_events", {
   sessionId: integer("session_id").primaryKey(),
@@ -91,5 +92,15 @@ export const tmRecalcEvents = pgTable("tm_recalc_events", {
   amrapReps: integer("amrap_reps").notNull(),
   e1rm: numeric("e1rm").notNull(),
   updatedExercises: integer("updated_exercises").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-})
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const syncOps = pgTable("sync_ops", {
+  operationId: text("operation_id").primaryKey(),
+  result: jsonb("result").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});

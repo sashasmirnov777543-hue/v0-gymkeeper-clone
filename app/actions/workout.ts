@@ -1,6 +1,6 @@
-"use server"
+"use server";
 
-import { db } from "@/lib/db"
+import { db } from "@/lib/db";
 import {
   appSettings,
   cycles,
@@ -8,40 +8,56 @@ import {
   workoutExercises,
   sessions,
   loggedSets,
-} from "@/lib/db/schema"
-import { and, desc, eq, inArray, ne } from "drizzle-orm"
-import { revalidatePath } from "next/cache"
-import { redirect } from "next/navigation"
-import { applyAmrapTmRecalc } from "@/lib/tm-recalc"
-import { ensureSchema } from "@/lib/db/migrate"
+} from "@/lib/db/schema";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { applyAmrapTmRecalc } from "@/lib/tm-recalc";
+import { ensureSchema } from "@/lib/db/migrate";
 
 export async function startSession(workoutId: number) {
+  await ensureSchema();
   // если уже есть активная сессия этой тренировки — продолжаем её
   const existing = await db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")))
-    .limit(1)
+    .where(
+      and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")),
+    )
+    .limit(1);
 
   if (existing.length > 0) {
-    redirect(`/session/${existing[0].id}`)
+    redirect(`/session/${existing[0].id}`);
   }
 
   const inserted = await db
     .insert(sessions)
     .values({ workoutId })
-    .returning({ id: sessions.id })
+    .onConflictDoNothing()
+    .returning({ id: sessions.id });
 
-  redirect(`/session/${inserted[0].id}`)
+  if (inserted.length === 0) {
+    const [winner] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(
+        and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")),
+      )
+      .limit(1);
+    if (winner) redirect(`/session/${winner.id}`);
+    throw new Error("Не удалось создать сессию");
+  }
+
+  redirect(`/session/${inserted[0].id}`);
 }
 
 export async function logSet(input: {
-  sessionId: number
-  workoutExerciseId: number
-  setNumber: number
-  weight: number | null
-  reps: number | null
-  rir: number | null
+  sessionId: number;
+  workoutExerciseId: number;
+  setNumber: number;
+  weight: number | null;
+  reps: number | null;
+  rir: number | null;
 }) {
   const inserted = await db
     .insert(loggedSets)
@@ -53,27 +69,27 @@ export async function logSet(input: {
       reps: input.reps,
       rir: input.rir,
     })
-    .returning({ id: loggedSets.id })
-  revalidatePath(`/session/${input.sessionId}`)
-  return { id: inserted[0].id }
+    .returning({ id: loggedSets.id });
+  revalidatePath(`/session/${input.sessionId}`);
+  return { id: inserted[0].id };
 }
 
 export async function deleteSet(setId: number, sessionId: number) {
-  await db.delete(loggedSets).where(eq(loggedSets.id, setId))
-  revalidatePath(`/session/${sessionId}`)
+  await db.delete(loggedSets).where(eq(loggedSets.id, setId));
+  revalidatePath(`/session/${sessionId}`);
 }
 
 export async function finishSession(sessionId: number, proposedTm?: number) {
   await db
     .update(sessions)
     .set({ status: "completed", finishedAt: new Date() })
-    .where(eq(sessions.id, sessionId))
+    .where(eq(sessions.id, sessionId));
 
   // если в сессии был AMRAP — автоматически пересчитываем ТМ следующего макро
-  const recalc = await applyAmrapTmRecalc(sessionId, { proposedTm })
+  const recalc = await applyAmrapTmRecalc(sessionId, { proposedTm });
 
-  revalidatePath("/")
-  revalidatePath("/history")
+  revalidatePath("/");
+  revalidatePath("/history");
   if (recalc) {
     const q = new URLSearchParams({
       tmMacro: String(recalc.macro),
@@ -81,17 +97,17 @@ export async function finishSession(sessionId: number, proposedTm?: number) {
       oldTm: recalc.oldTm != null ? String(recalc.oldTm) : "",
       e1rm: String(recalc.e1rm),
       amrap: `${recalc.amrapWeight}x${recalc.amrapReps}`,
-    })
-    redirect(`/history?${q.toString()}`)
+    });
+    redirect(`/history?${q.toString()}`);
   }
-  redirect("/history")
+  redirect("/history");
 }
 
 export async function cancelSession(sessionId: number) {
-  await db.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId))
-  await db.delete(sessions).where(eq(sessions.id, sessionId))
-  revalidatePath("/")
-  redirect("/")
+  await db.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId));
+  await db.delete(sessions).where(eq(sessions.id, sessionId));
+  revalidatePath("/");
+  redirect("/");
 }
 
 /** Сохранение заметки к тренировке (самочувствие, нюансы) */
@@ -99,18 +115,18 @@ export async function saveSessionNotes(sessionId: number, notes: string) {
   await db
     .update(sessions)
     .set({ notes: notes.trim() || null })
-    .where(eq(sessions.id, sessionId))
-  revalidatePath(`/session/${sessionId}`)
-  revalidatePath("/history")
+    .where(eq(sessions.id, sessionId));
+  revalidatePath(`/session/${sessionId}`);
+  revalidatePath("/history");
 }
 
 /** Редактирование записанного подхода */
 export async function updateSet(input: {
-  setId: number
-  sessionId: number
-  weight: number | null
-  reps: number | null
-  rir: number | null
+  setId: number;
+  sessionId: number;
+  weight: number | null;
+  reps: number | null;
+  rir: number | null;
 }) {
   await db
     .update(loggedSets)
@@ -119,19 +135,19 @@ export async function updateSet(input: {
       reps: input.reps,
       rir: input.rir,
     })
-    .where(eq(loggedSets.id, input.setId))
-  revalidatePath(`/session/${input.sessionId}`)
+    .where(eq(loggedSets.id, input.setId));
+  revalidatePath(`/session/${input.sessionId}`);
 }
 
 /** Завершение кардио-сессии: пишем длительность, средний пульс, скорость и сопротивление */
 export async function finishCardioSession(input: {
-  sessionId: number
-  durationSeconds: number
-  avgHr: number | null
-  speed?: string | null
-  resistance?: string | null
+  sessionId: number;
+  durationSeconds: number;
+  avgHr: number | null;
+  speed?: string | null;
+  resistance?: string | null;
 }) {
-  await ensureSchema()
+  await ensureSchema();
   await db
     .update(sessions)
     .set({
@@ -142,9 +158,9 @@ export async function finishCardioSession(input: {
       cardioSpeed: input.speed ?? null,
       cardioResistance: input.resistance ?? null,
     })
-    .where(eq(sessions.id, input.sessionId))
-  revalidatePath("/")
-  revalidatePath("/history")
+    .where(eq(sessions.id, input.sessionId));
+  revalidatePath("/");
+  revalidatePath("/history");
 }
 
 /**
@@ -156,7 +172,7 @@ export async function getLastCardioSession(
   workoutTitle: string,
   excludeSessionId: number,
 ) {
-  await ensureSchema()
+  await ensureSchema();
   const rows = await db
     .select({
       speed: sessions.cardioSpeed,
@@ -175,8 +191,8 @@ export async function getLastCardioSession(
       ),
     )
     .orderBy(desc(sessions.startedAt))
-    .limit(1)
-  return rows[0] ?? null
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 /**
@@ -185,7 +201,7 @@ export async function getLastCardioSession(
  * Возвращает: имя упражнения -> подходы последней завершённой сессии.
  */
 export async function getLastSetsByExerciseNames(names: string[]) {
-  if (names.length === 0) return {}
+  if (names.length === 0) return {};
 
   const rows = await db
     .select({
@@ -203,30 +219,33 @@ export async function getLastSetsByExerciseNames(names: string[]) {
     )
     .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
     .where(
-      and(eq(sessions.status, "completed"), inArray(workoutExercises.name, names)),
+      and(
+        eq(sessions.status, "completed"),
+        inArray(workoutExercises.name, names),
+      ),
     )
-    .orderBy(desc(sessions.startedAt), loggedSets.id)
+    .orderBy(desc(sessions.startedAt), loggedSets.id);
 
   const result: Record<
     string,
     { weight: number | null; reps: number | null; rir: number | null }[]
-  > = {}
-  const latestSession: Record<string, number> = {}
+  > = {};
+  const latestSession: Record<string, number> = {};
 
   for (const r of rows) {
     if (!(r.name in latestSession)) {
-      latestSession[r.name] = r.sessionId
-      result[r.name] = []
+      latestSession[r.name] = r.sessionId;
+      result[r.name] = [];
     }
     if (latestSession[r.name] === r.sessionId) {
       result[r.name].push({
         weight: r.weight != null ? Number.parseFloat(r.weight) : null,
         reps: r.reps,
         rir: r.rir,
-      })
+      });
     }
   }
-  return result
+  return result;
 }
 
 /**
@@ -248,29 +267,31 @@ export async function getExerciseHistory(name: string, limit = 6) {
       eq(loggedSets.workoutExerciseId, workoutExercises.id),
     )
     .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
-    .where(and(eq(sessions.status, "completed"), eq(workoutExercises.name, name)))
-    .orderBy(desc(sessions.startedAt))
+    .where(
+      and(eq(sessions.status, "completed"), eq(workoutExercises.name, name)),
+    )
+    .orderBy(desc(sessions.startedAt));
 
   // группируем по сессии, берём лучший подход
   const bySession = new Map<
     number,
     { date: string; weight: number; reps: number }
-  >()
-  const order: number[] = []
+  >();
+  const order: number[] = [];
   for (const r of rows) {
-    const w = r.weight != null ? Number.parseFloat(r.weight) : 0
+    const w = r.weight != null ? Number.parseFloat(r.weight) : 0;
     if (!bySession.has(r.sessionId)) {
-      order.push(r.sessionId)
+      order.push(r.sessionId);
       bySession.set(r.sessionId, {
         date: r.startedAt.toISOString(),
         weight: w,
         reps: r.reps ?? 0,
-      })
+      });
     } else {
-      const cur = bySession.get(r.sessionId)!
+      const cur = bySession.get(r.sessionId)!;
       if (w > cur.weight || (w === cur.weight && (r.reps ?? 0) > cur.reps)) {
-        cur.weight = w
-        cur.reps = r.reps ?? 0
+        cur.weight = w;
+        cur.reps = r.reps ?? 0;
       }
     }
   }
@@ -279,7 +300,7 @@ export async function getExerciseHistory(name: string, limit = 6) {
   return order
     .slice(0, limit)
     .reverse()
-    .map((id) => bySession.get(id)!)
+    .map((id) => bySession.get(id)!);
 }
 
 /** Переключение активного программного блока (V9 / H2) */
@@ -290,6 +311,6 @@ export async function setActiveBlock(block: "v9" | "h2") {
     .onConflictDoUpdate({
       target: appSettings.key,
       set: { value: block },
-    })
-  revalidatePath("/")
+    });
+  revalidatePath("/");
 }
