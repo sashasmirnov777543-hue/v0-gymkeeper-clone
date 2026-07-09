@@ -1,4 +1,4 @@
-import { epley1RM, roundToStep } from "@/lib/training-logic"
+import { epley1RM, roundToStep } from "./training-logic.ts"
 
 export { epley1RM, roundToStep }
 

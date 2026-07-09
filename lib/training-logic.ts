@@ -121,6 +121,25 @@ export function weightFromPercent(
   return roundToStep((percent / 100) * base, step);
 }
 
+export function isBoardPress(name: string): boolean {
+  return /board\s*press|жим\s+(?:с|от)\s+бруск/i.test(name);
+}
+
+/**
+ * Основные упражнения считаются от TM, board press — от расчётного e1RM.
+ * Разделение намеренное: перегрузка локаута не должна уменьшаться второй раз
+ * из-за коэффициента TM (0,90).
+ */
+export function programWeightFromPercent(
+  exerciseName: string,
+  percent: number,
+  bases: { tm: number; e1rm: number },
+  step = DEFAULT_WEIGHT_STEP,
+): number {
+  const base = isBoardPress(exerciseName) ? bases.e1rm : bases.tm;
+  return weightFromPercent(percent, base, step);
+}
+
 function fmtKg(value: number): string {
   return (Number.isInteger(value) ? String(value) : value.toFixed(1)).replace(
     ".",
@@ -136,4 +155,38 @@ export function recalcWeightText(text: string, newTm: number): string {
       return `${percent}${middle}(${fmtKg(weightFromPercent(value, newTm))})`;
     },
   );
+}
+
+/** Пересчёт строки упражнения с корректной базой процента. */
+export function recalcExerciseWeightText(
+  exerciseName: string,
+  text: string,
+  newTm: number,
+  e1rm = newTm / V9_TM_FACTOR,
+): string {
+  if (!isBoardPress(exerciseName)) return recalcWeightText(text, newTm);
+  return text.replace(
+    /(\d+(?:[.,]\d+)?)(\s*%\s*(?:e1rm|1пм)?\s*)\((\d+(?:[.,]\d+)?)\)/gi,
+    (_match, percent: string, middle: string) => {
+      const value = Number.parseFloat(percent.replace(",", "."));
+      const weight = programWeightFromPercent(exerciseName, value, {
+        tm: newTm,
+        e1rm,
+      });
+      return `${percent}${middle}(${fmtKg(weight)})`;
+    },
+  );
+}
+
+export function manualTrainingMaxPlan(macro: number, newTm: number): {
+  key: `tm_macro${1 | 2 | 3}`;
+  value: string;
+} {
+  if (![1, 2, 3].includes(macro) || !Number.isFinite(newTm) || newTm <= 0) {
+    throw new Error("Некорректный TM");
+  }
+  return {
+    key: `tm_macro${macro as 1 | 2 | 3}`,
+    value: String(newTm),
+  };
 }

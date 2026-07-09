@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { epley1RM, recalcWeightText, roundToStep, trainingMaxFromAmrap, weightFromPercent } from "../lib/training-logic.ts"
+import { epley1RM, programWeightFromPercent, recalcExerciseWeightText, recalcWeightText, roundToStep, trainingMaxFromAmrap, weightFromPercent } from "../lib/training-logic.ts"
 
 test("93.5 × 10 gives e1RM 124.7 and TM 112.5", () => {
   const result = trainingMaxFromAmrap(93.5, 10)
@@ -22,4 +22,14 @@ test("program text is recalculated from TM", () => {
 test("Epley rejects invalid inputs", () => {
   assert.throws(() => epley1RM(0, 10))
   assert.throws(() => epley1RM(100, 0))
+})
+
+test("board press считается от e1RM, основные веса — от TM", () => {
+  const bases = { tm: 112.5, e1rm: 125 }
+  assert.equal(programWeightFromPercent("Жим лёжа", 90, bases), 102.5)
+  assert.equal(programWeightFromPercent("Board press (жим с бруска)", 105, bases), 132.5)
+  assert.equal(
+    recalcExerciseWeightText("Board press (жим с бруска)", "105 % e1RM (125)", 112.5, 125),
+    "105 % e1RM (132,5)",
+  )
 })

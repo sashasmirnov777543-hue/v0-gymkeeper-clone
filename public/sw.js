@@ -1,13 +1,24 @@
 // Service worker: офлайн-кэширование страниц и статики
-const CACHE = "gym-cache-v5"
+const CACHE = "gym-cache-v6"
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
       .then((cache) => cache.addAll(["/"]))
-      .then(() => self.skipWaiting()),
+      // Новый worker остаётся waiting: пользователь сам применяет обновление
+      // кнопкой в приложении, не теряя незавершённую тренировку.
+      .then(() => undefined),
   )
+})
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting()
+  if (event.data?.type === "CLEAR_CACHES") {
+    event.waitUntil(
+      caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))),
+    )
+  }
 })
 
 self.addEventListener("activate", (event) => {

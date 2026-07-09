@@ -10,7 +10,11 @@ import {
   workoutExercises,
   workouts,
 } from "@/lib/db/schema";
-import { recalcWeightText, trainingMaxFromAmrap } from "@/lib/training-logic";
+import {
+  manualTrainingMaxPlan,
+  recalcExerciseWeightText,
+  trainingMaxFromAmrap,
+} from "@/lib/training-logic";
 
 export type TmRecalcResult = {
   macro: number;
@@ -62,6 +66,7 @@ async function updateMacroExercises(
   const exercises = await tx
     .select({
       id: workoutExercises.id,
+      name: workoutExercises.name,
       weightText: workoutExercises.weightText,
     })
     .from(workoutExercises)
@@ -70,7 +75,11 @@ async function updateMacroExercises(
   let updated = 0;
   for (const exercise of exercises) {
     if (!exercise.weightText) continue;
-    const next = recalcWeightText(exercise.weightText, newTm);
+    const next = recalcExerciseWeightText(
+      exercise.name,
+      exercise.weightText,
+      newTm,
+    );
     if (next !== exercise.weightText) {
       await tx
         .update(workoutExercises)
@@ -195,17 +204,14 @@ export async function applyManualTrainingMax(
   newTm: number,
 ): Promise<number> {
   await ensureSchema();
-  if (![1, 2, 3].includes(macro) || !Number.isFinite(newTm) || newTm <= 0) {
-    throw new Error("Некорректный TM");
-  }
+  const plan = manualTrainingMaxPlan(macro, newTm);
   return db.transaction(async (tx) => {
-    const key = `tm_macro${macro}`;
     await tx
       .insert(appSettings)
-      .values({ key, value: String(newTm) })
+      .values(plan)
       .onConflictDoUpdate({
         target: appSettings.key,
-        set: { value: String(newTm) },
+        set: { value: plan.value },
       });
     return updateMacroExercises(tx, macro, newTm);
   });

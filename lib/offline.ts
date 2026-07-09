@@ -3,6 +3,7 @@
 
 import type { LoggedSetLite } from "@/lib/recommend";
 import type { ReadinessInput } from "@/lib/training-logic";
+import { dedupeOperationsById } from "@/lib/offline-dedup";
 
 const PROGRAM_KEY = "gym:program";
 const OUTBOX_KEY = "gym:outbox";
@@ -146,8 +147,11 @@ export function getOutbox(): OutboxOp[] {
       changed = true;
       return { ...op, operationId: crypto.randomUUID() } as OutboxOp;
     });
-    if (changed) localStorage.setItem(OUTBOX_KEY, JSON.stringify(ops));
-    return ops;
+    const unique = dedupeOperationsById(ops);
+    if (changed || unique.length !== ops.length) {
+      localStorage.setItem(OUTBOX_KEY, JSON.stringify(unique));
+    }
+    return unique;
   } catch {
     return [];
   }
@@ -161,7 +165,7 @@ function setOutbox(ops: OutboxOp[]) {
 export function pushOp(op: OutboxPayload | OutboxOp) {
   const operation =
     "operationId" in op ? op : { ...op, operationId: crypto.randomUUID() };
-  setOutbox([...getOutbox(), operation as OutboxOp]);
+  setOutbox(dedupeOperationsById([...getOutbox(), operation as OutboxOp]));
 }
 
 /** Отправляет очередь на сервер. Возвращает true, если всё ушло. */

@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { appSettings, cycles, workouts, sessions } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
 import { BlockSwitcher } from "@/components/block-switcher"
+import { AppVersion } from "@/components/app-version"
 import { Bike, ChevronRight, Dumbbell, Flame } from "lucide-react"
 
 export const dynamic = "force-dynamic"
@@ -264,6 +265,7 @@ export default async function HomePage() {
           <span className="font-mono font-semibold text-foreground">К</span> — кардио ·{" "}
           <span className="line-through decoration-2">зачёркнут</span> — выполнена
         </p>
+        <AppVersion />
       </main>
 
       <BottomNav />
