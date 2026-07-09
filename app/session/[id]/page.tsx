@@ -110,7 +110,11 @@ export default async function SessionPage({
     notes: session.notes,
   }
   const workoutProp = { id: workout.id, title: workout.title }
-  const cycleProp = { number: cycle?.number ?? 0, name: cycle?.name ?? "" }
+  const cycleProp = {
+    number: cycle?.number ?? 0,
+    name: cycle?.name ?? "",
+    block: cycle?.block ?? "v9",
+  }
   const exercisesProp = exercises.map((e) => ({
     id: e.id,
     name: e.name,

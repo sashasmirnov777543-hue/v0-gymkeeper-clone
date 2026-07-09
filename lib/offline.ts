@@ -40,6 +40,7 @@ export type CachedCycle = {
   number: number
   name: string
   macrocycle: number
+  block?: string
   notes: string | null
   workouts: CachedWorkout[]
 }

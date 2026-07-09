@@ -24,6 +24,7 @@ import { HeartRateBadge } from "@/components/heart-rate"
 import { RestTimer } from "@/components/rest-timer"
 import { SessionNotes } from "@/components/session-notes"
 import { WarmupPlates } from "@/components/warmup-plates"
+import { MyorepsPanel } from "@/components/myoreps-panel"
 import { useWakeLock } from "@/lib/heart-rate"
 import { unlockAudio } from "@/lib/sound"
 import {
@@ -106,7 +107,7 @@ export function SessionLogger({
 }: {
   session: { id: number; status: string; startedAt: string; notes?: string | null }
   workout: { id: number; title: string }
-  cycle: { number: number; name: string }
+  cycle: { number: number; name: string; block: string }
   exercises: Exercise[]
   initialSets: SetRow[]
   lastSetsByName: Record<string, LoggedSetLite[]>
@@ -280,6 +281,8 @@ export function SessionLogger({
           offline={Boolean(offlineKey)}
           onRest={(seconds, label, rec) => setRest({ seconds, label, rec })}
           onAdvance={isLast ? undefined : goNext}
+          cycleNumber={cycle.number}
+          block={cycle.block}
         />
       ) : (
         <div className="px-4 py-10 text-center text-sm text-muted-foreground">
@@ -385,6 +388,8 @@ function CurrentExercise({
   offline,
   onRest,
   onAdvance,
+  cycleNumber,
+  block,
 }: {
   exercise: Exercise
   position: number
@@ -405,6 +410,8 @@ function CurrentExercise({
   offline: boolean
   onRest: (seconds: number, label: string, rec: Recommendation) => void
   onAdvance?: () => void
+  cycleNumber: number
+  block: string
 }) {
   const [editingId, setEditingId] = useState<number | null>(null)
   const prescribed = parsePrescribedWeight(exercise.weightText)
@@ -484,6 +491,13 @@ function CurrentExercise({
         </div>
 
         <div className="px-4 py-3">
+          <MyorepsPanel
+            exerciseName={exercise.name}
+            block={block}
+            cycleNumber={cycleNumber}
+            readOnly={readOnly}
+          />
+
           {exercise.comment && (
             <p className="mb-3 rounded-md bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground">
               {exercise.comment}

@@ -92,7 +92,7 @@ function OfflineSession() {
     <SessionLogger
       session={{ id: 0, status: "active", startedAt }}
       workout={{ id: workout.id, title: workout.title }}
-      cycle={{ number: cycle.number, name: cycle.name }}
+      cycle={{ number: cycle.number, name: cycle.name, block: cycle.block ?? "v9" }}
       exercises={workout.exercises}
       initialSets={loadLocalSets(localKey)}
       lastSetsByName={program.lastSetsByName}
