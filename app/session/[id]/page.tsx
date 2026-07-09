@@ -126,7 +126,8 @@ export default async function SessionPage({
     name: cycle?.name ?? "",
     block: cycle?.block ?? "v9",
   };
-  const visibleExercises = isMiniTaper(session.readinessLevel)
+  const cycleMiniTaper = [4, 8].includes(cycle?.number ?? 0);
+  const visibleExercises = (isMiniTaper(session.readinessLevel) || cycleMiniTaper)
     ? exercises.filter((e) => !isIsolationExercise(e.name))
     : exercises;
   const exercisesProp = visibleExercises.map((e) => ({

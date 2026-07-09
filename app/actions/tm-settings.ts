@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { applyAmrapTmRecalc, applyManualTrainingMax, latestAmrapSessionId, undoLatestTmRecalc } from "@/lib/tm-recalc"
 import { roundToStep } from "@/lib/training-logic"
+import { requireAuth } from "@/lib/require-auth"
 
 export async function saveManualTm(formData: FormData) {
+  await requireAuth()
   const macro = Number(formData.get("macro"))
   const raw = Number(String(formData.get("tm") ?? "").replace(",", "."))
   if (![1, 2, 3].includes(macro) || !Number.isFinite(raw) || raw <= 0) {
@@ -19,6 +21,7 @@ export async function saveManualTm(formData: FormData) {
 }
 
 export async function recalculateLastAmrap() {
+  await requireAuth()
   const sessionId = await latestAmrapSessionId()
   if (sessionId == null) redirect("/settings?error=AMRAP-сессия+не+найдена")
   const result = await applyAmrapTmRecalc(sessionId, { force: true })
@@ -30,6 +33,7 @@ export async function recalculateLastAmrap() {
 }
 
 export async function undoLastTmChange() {
+  await requireAuth()
   const result = await undoLatestTmRecalc()
   if (!result) redirect("/settings?error=Нет+пересчёта,+который+можно+отменить")
   revalidatePath("/")

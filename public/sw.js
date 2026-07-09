@@ -38,8 +38,8 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return
-  // синхронизацию не кэшируем никогда
-  if (url.pathname.startsWith("/api/sync")) return
+  // приватные API и экран входа не кэшируем никогда
+  if (url.pathname.startsWith("/api/") || url.pathname === "/login") return
 
   const isStatic =
     url.pathname.startsWith("/_next/static") ||

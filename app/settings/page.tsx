@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ensureSchema } from "@/lib/db/migrate";
 import { appSettings, tmRecalcEvents } from "@/lib/db/schema";
 import { BottomNav } from "@/components/bottom-nav";
+import { BackupRestore } from "@/components/backup-restore";
 import {
   recalculateLastAmrap,
   saveManualTm,
@@ -120,24 +121,7 @@ export default async function SettingsPage({
         </div>
       </section>
 
-      <section className="mt-7 rounded-xl border border-border bg-card p-4">
-        <h2 className="text-lg font-bold">Резервная копия</h2>
-        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-          Полный снимок всех таблиц базы данных в JSON. Храните файл в
-          защищённом месте.
-        </p>
-        <a
-          href="/api/export/json"
-          download
-          className="mt-4 flex h-11 w-full items-center justify-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
-        >
-          Скачать JSON-копию
-        </a>
-        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-          Импорт будет добавлен отдельным безопасным шагом: проверка файла,
-          предпросмотр и восстановление одной транзакцией.
-        </p>
-      </section>
+      <BackupRestore />
       <BottomNav />
     </main>
   );

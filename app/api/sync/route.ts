@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ensureSchema } from "@/lib/db/migrate";
-import { loggedSets, sessions, syncOps } from "@/lib/db/schema";
+import { loggedSets, sessions, syncOps, workouts, workoutExercises } from "@/lib/db/schema";
 import {
   applyAmrapTmRecalcInTransaction,
   type TmRecalcResult,
@@ -170,6 +170,8 @@ export async function POST(req: Request) {
             result = { kind: "set", skipped: true };
             break;
           }
+          const [valid] = await tx.select({id:sessions.id}).from(sessions).innerJoin(workouts,eq(sessions.workoutId,workouts.id)).innerJoin(workoutExercises,eq(workoutExercises.workoutId,workouts.id)).where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active' and ${workoutExercises.id}=${op.workoutExerciseId}`).limit(1);
+          if(!valid) throw new Error("Подход не принадлежит активной сессии");
           const [inserted] = await tx
             .insert(loggedSets)
             .values({

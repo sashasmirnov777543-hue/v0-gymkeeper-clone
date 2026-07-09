@@ -23,6 +23,7 @@ function LoginShell() {
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,7 +37,7 @@ function LoginForm() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
@@ -72,12 +73,13 @@ function LoginForm() {
 
         {needsSetup && (
           <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-            Задайте <code className="font-mono">APP_PASSWORD</code> в настройках
-            Vercel и повторно опубликуйте проект.
+            Задайте <code className="font-mono">APP_USERNAME</code>, <code className="font-mono">APP_PASSWORD</code> и длинный <code className="font-mono">SESSION_SECRET</code> в Vercel.
           </div>
         )}
 
         <form className="mt-5 space-y-3" onSubmit={submit}>
+          <label className="block text-sm font-medium" htmlFor="username">Имя пользователя</label>
+          <input id="username" autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} className="h-12 w-full rounded-lg border border-input bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Личный логин" />
           <label className="block text-sm font-medium" htmlFor="password">
             Пароль
           </label>

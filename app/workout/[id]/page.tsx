@@ -60,9 +60,7 @@ export default async function WorkoutPage({
     db
       .select()
       .from(sessions)
-      .where(
-        and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")),
-      )
+      .where(eq(sessions.status, "active"))
       .limit(1),
   ]);
 

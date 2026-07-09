@@ -1,56 +1,17 @@
 const COOKIE_NAME = "gym_session";
-const SESSION_PAYLOAD = "gymkeeper:authenticated:v1";
-
-export { COOKIE_NAME };
-
-function password(): string | null {
-  const value = process.env.APP_PASSWORD?.trim();
-  return value ? value : null;
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+export { COOKIE_NAME, SESSION_TTL_SECONDS };
+const enc = new TextEncoder();
+function ownerName() { return process.env.APP_USERNAME?.trim() || "owner" }
+function secret() { return process.env.SESSION_SECRET?.trim() || null }
+function password() { return process.env.APP_PASSWORD?.trim() || null }
+function hex(bytes: ArrayBuffer) { return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,"0")).join("") }
+async function sign(value: string) {
+ const key=await crypto.subtle.importKey("raw",enc.encode(secret()!),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+ return hex(await crypto.subtle.sign("HMAC",key,enc.encode(value)));
 }
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return bytesToHex(new Uint8Array(digest));
-}
-
-/** Стабильный токен сессии. Пароль никогда не сохраняется в cookie. */
-export async function expectedSessionToken(): Promise<string | null> {
-  const value = password();
-  return value ? sha256(`${SESSION_PAYLOAD}:${value}`) : null;
-}
-
-/** Сравнение без раннего выхода по первому отличающемуся символу. */
-function safeEqual(left: string, right: string): boolean {
-  const length = Math.max(left.length, right.length);
-  let diff = left.length ^ right.length;
-  for (let i = 0; i < length; i += 1) {
-    diff |= (left.charCodeAt(i) || 0) ^ (right.charCodeAt(i) || 0);
-  }
-  return diff === 0;
-}
-
-export function isPasswordConfigured(): boolean {
-  return password() != null;
-}
-
-export function verifyPassword(candidate: string): boolean {
-  const value = password();
-  return value != null && safeEqual(candidate, value);
-}
-
-export async function verifySessionToken(
-  token: string | undefined,
-): Promise<boolean> {
-  if (!token) return false;
-  const expected = await expectedSessionToken();
-  return expected != null && safeEqual(token, expected);
-}
+function safeEqual(a:string,b:string){let d=a.length^b.length,n=Math.max(a.length,b.length);for(let i=0;i<n;i++)d|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return d===0}
+export function isPasswordConfigured(){return Boolean(password() && secret() && secret()!.length>=32)}
+export function verifyCredentials(username:string,candidate:string){return isPasswordConfigured()&&safeEqual(username.trim().toLocaleLowerCase(),ownerName().toLocaleLowerCase())&&safeEqual(candidate,password()!)}
+export async function createSessionToken(){if(!isPasswordConfigured())return null;const exp=Math.floor(Date.now()/1000)+SESSION_TTL_SECONDS;const payload=`${ownerName()}:${exp}`;return `${payload}:${await sign(payload)}`}
+export async function verifySessionToken(token?:string){if(!token||!isPasswordConfigured())return false;const parts=token.split(":");if(parts.length<3)return false;const sig=parts.pop()!,exp=Number(parts.pop()),name=parts.join(":");if(!Number.isFinite(exp)||exp<Math.floor(Date.now()/1000)||!safeEqual(name,ownerName()))return false;return safeEqual(sig,await sign(`${name}:${exp}`))}

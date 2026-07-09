@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "node scripts/lint.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "db:migrate": "node scripts/migrate.mjs",
+    "check": "pnpm lint && pnpm test && pnpm typecheck && pnpm build"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

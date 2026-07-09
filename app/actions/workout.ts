@@ -12,22 +12,22 @@ import {
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { applyAmrapTmRecalc } from "@/lib/tm-recalc";
+import { applyAmrapTmRecalcInTransaction } from "@/lib/tm-recalc";
 import { ensureSchema } from "@/lib/db/migrate";
 import { readinessLevel, type ReadinessInput } from "@/lib/training-logic";
+import { requireAuth } from "@/lib/require-auth";
 
 export async function startSession(
   workoutId: number,
   readiness?: ReadinessInput,
 ) {
+  await requireAuth();
   await ensureSchema();
-  // если уже есть активная сессия этой тренировки — продолжаем её
+  // персональный трекер допускает только одну активную тренировку вообще
   const existing = await db
     .select()
     .from(sessions)
-    .where(
-      and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")),
-    )
+    .where(eq(sessions.status, "active"))
     .limit(1);
 
   if (existing.length > 0) {
@@ -58,15 +58,25 @@ export async function startSession(
     const [winner] = await db
       .select({ id: sessions.id })
       .from(sessions)
-      .where(
-        and(eq(sessions.workoutId, workoutId), eq(sessions.status, "active")),
-      )
+      .where(eq(sessions.status, "active"))
       .limit(1);
     if (winner) redirect(`/session/${winner.id}`);
     throw new Error("Не удалось создать сессию");
   }
 
   redirect(`/session/${inserted[0].id}`);
+}
+
+async function assertExerciseBelongsToSession(sessionId: number, exerciseId: number) {
+  const [row] = await db.select({ id: sessions.id }).from(sessions)
+    .innerJoin(workouts, eq(sessions.workoutId, workouts.id))
+    .innerJoin(workoutExercises, eq(workoutExercises.workoutId, workouts.id))
+    .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active"), eq(workoutExercises.id, exerciseId))).limit(1);
+  if (!row) throw new Error("Подход не принадлежит активной сессии");
+}
+async function assertSetBelongsToSession(setId: number, sessionId: number) {
+ const [row]=await db.select({id:loggedSets.id}).from(loggedSets).where(and(eq(loggedSets.id,setId),eq(loggedSets.sessionId,sessionId))).limit(1);
+ if(!row) throw new Error("Подход не принадлежит сессии");
 }
 
 export async function logSet(input: {
@@ -79,6 +89,8 @@ export async function logSet(input: {
   velocity: "fast" | "normal" | "slow";
   stickingPoint: "chest" | "middle" | "lockout" | null;
 }) {
+  await requireAuth();
+  await assertExerciseBelongsToSession(input.sessionId, input.workoutExerciseId);
   const inserted = await db
     .insert(loggedSets)
     .values({
@@ -97,18 +109,20 @@ export async function logSet(input: {
 }
 
 export async function deleteSet(setId: number, sessionId: number) {
-  await db.delete(loggedSets).where(eq(loggedSets.id, setId));
+  await requireAuth();
+  await assertSetBelongsToSession(setId, sessionId);
+  await db.delete(loggedSets).where(and(eq(loggedSets.id, setId), eq(loggedSets.sessionId, sessionId)));
   revalidatePath(`/session/${sessionId}`);
 }
 
 export async function finishSession(sessionId: number, proposedTm?: number) {
-  await db
-    .update(sessions)
-    .set({ status: "completed", finishedAt: new Date() })
-    .where(eq(sessions.id, sessionId));
-
-  // если в сессии был AMRAP — автоматически пересчитываем ТМ следующего макро
-  const recalc = await applyAmrapTmRecalc(sessionId, { proposedTm });
+  await requireAuth();
+  const recalc = await db.transaction(async (tx) => {
+    const changed = await tx.update(sessions).set({ status: "completed", finishedAt: new Date() })
+      .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active"))).returning({id:sessions.id});
+    if (!changed.length) throw new Error("Сессия уже завершена или не найдена");
+    return applyAmrapTmRecalcInTransaction(tx, sessionId, { proposedTm });
+  });
 
   revalidatePath("/");
   revalidatePath("/history");
@@ -126,14 +140,18 @@ export async function finishSession(sessionId: number, proposedTm?: number) {
 }
 
 export async function cancelSession(sessionId: number) {
-  await db.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId));
-  await db.delete(sessions).where(eq(sessions.id, sessionId));
+  await requireAuth();
+  await db.transaction(async (tx) => {
+    await tx.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId));
+    await tx.delete(sessions).where(and(eq(sessions.id, sessionId), eq(sessions.status, "active")));
+  });
   revalidatePath("/");
   redirect("/");
 }
 
 /** Сохранение заметки к тренировке (самочувствие, нюансы) */
 export async function saveSessionNotes(sessionId: number, notes: string) {
+  await requireAuth();
   await db
     .update(sessions)
     .set({ notes: notes.trim() || null })
@@ -150,6 +168,8 @@ export async function updateSet(input: {
   reps: number | null;
   rir: number | null;
 }) {
+  await requireAuth();
+  await assertSetBelongsToSession(input.setId, input.sessionId);
   await db
     .update(loggedSets)
     .set({
@@ -172,6 +192,7 @@ export async function finishCardioSession(input: {
   cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
   cardioSymptoms?: string | null;
 }) {
+  await requireAuth();
   await ensureSchema();
   await db
     .update(sessions)
@@ -333,6 +354,7 @@ export async function getExerciseHistory(name: string, limit = 6) {
 
 /** Переключение активного программного блока (V9 / H2) */
 export async function setActiveBlock(block: "v9" | "h2") {
+  await requireAuth();
   await db
     .insert(appSettings)
     .values({ key: "active_block", value: block })

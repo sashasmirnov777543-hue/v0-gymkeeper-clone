@@ -48,6 +48,7 @@ async function updateMacroExercises(
   tx: Pick<typeof db, "select" | "insert" | "update">,
   macro: number,
   newTm: number,
+  freshE1rm = newTm / 0.9,
 ): Promise<number> {
   const macroCycles = await tx
     .select({ id: cycles.id })
@@ -79,6 +80,7 @@ async function updateMacroExercises(
       exercise.name,
       exercise.weightText,
       newTm,
+      freshE1rm,
     );
     if (next !== exercise.weightText) {
       await tx
@@ -171,7 +173,7 @@ export async function applyAmrapTmRecalcInTransaction(
       set: { value: String(newTm) },
     });
 
-  const updatedExercises = await updateMacroExercises(tx, targetMacro, newTm);
+  const updatedExercises = await updateMacroExercises(tx, targetMacro, newTm, best.e1rm);
   const event = {
     sessionId,
     targetMacro,
@@ -202,6 +204,7 @@ export async function applyAmrapTmRecalcInTransaction(
 export async function applyManualTrainingMax(
   macro: number,
   newTm: number,
+  freshE1rm = newTm / 0.9,
 ): Promise<number> {
   await ensureSchema();
   const plan = manualTrainingMaxPlan(macro, newTm);

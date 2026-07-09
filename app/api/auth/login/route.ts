@@ -1,46 +1,12 @@
 import { NextResponse } from "next/server";
-import {
-  COOKIE_NAME,
-  expectedSessionToken,
-  isPasswordConfigured,
-  verifyPassword,
-} from "@/lib/auth";
-
+import { COOKIE_NAME, SESSION_TTL_SECONDS, createSessionToken, isPasswordConfigured, verifyCredentials } from "@/lib/auth";
+const attempts=new Map<string,{count:number;reset:number}>();
 export async function POST(request: Request) {
-  if (!isPasswordConfigured()) {
-    return NextResponse.json(
-      { error: "Сначала задайте APP_PASSWORD в Vercel Environment Variables." },
-      { status: 503 },
-    );
-  }
-
-  let candidate = "";
-  try {
-    const body = (await request.json()) as { password?: unknown };
-    candidate = typeof body.password === "string" ? body.password : "";
-  } catch {
-    return NextResponse.json({ error: "Некорректный запрос" }, { status: 400 });
-  }
-
-  if (!verifyPassword(candidate)) {
-    return NextResponse.json({ error: "Неверный пароль" }, { status: 401 });
-  }
-
-  const token = await expectedSessionToken();
-  if (!token) {
-    return NextResponse.json(
-      { error: "APP_PASSWORD не настроен" },
-      { status: 503 },
-    );
-  }
-
-  const response = NextResponse.json({ ok: true });
-  response.cookies.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
-  return response;
+ if(!isPasswordConfigured()) return NextResponse.json({error:"Задайте APP_PASSWORD, APP_USERNAME и SESSION_SECRET (не менее 32 символов)."},{status:503});
+ const ip=request.headers.get("x-forwarded-for")?.split(",")[0]||"local", now=Date.now();
+ const state=attempts.get(ip); if(state&&state.reset>now&&state.count>=5) return NextResponse.json({error:"Слишком много попыток. Повторите через 15 минут."},{status:429});
+ let username="",password=""; try{const b=await request.json();username=typeof b.username==="string"?b.username:"";password=typeof b.password==="string"?b.password:""}catch{return NextResponse.json({error:"Некорректный запрос"},{status:400})}
+ if(!verifyCredentials(username,password)){const cur=state&&state.reset>now?state:{count:0,reset:now+15*60_000};cur.count++;attempts.set(ip,cur);return NextResponse.json({error:"Неверное имя или пароль"},{status:401})}
+ attempts.delete(ip); const token=await createSessionToken(); const response=NextResponse.json({ok:true});
+ response.cookies.set(COOKIE_NAME,token!,{httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"strict",path:"/",maxAge:SESSION_TTL_SECONDS});return response;
 }

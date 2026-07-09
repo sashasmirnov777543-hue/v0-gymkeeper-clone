@@ -66,6 +66,8 @@ export const sessions = pgTable("sessions", {
   cardioRpe: integer("cardio_rpe"),
   cardioTalkTest: text("cardio_talk_test"),
   cardioSymptoms: text("cardio_symptoms"),
+  cardioOverheating: integer("cardio_overheating"),
+  cardioFeeling: integer("cardio_feeling"),
   sleepMinutes: integer("sleep_minutes"),
   sleepQuality: integer("sleep_quality"),
   morningPulseDelta: integer("morning_pulse_delta"),
@@ -103,10 +105,24 @@ export const tmRecalcEvents = pgTable("tm_recalc_events", {
   amrapWeight: numeric("amrap_weight").notNull(),
   amrapReps: integer("amrap_reps").notNull(),
   e1rm: numeric("e1rm").notNull(),
+  resultFingerprint: text("result_fingerprint").notNull().default(""),
   updatedExercises: integer("updated_exercises").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+});
+
+export const tmChangeHistory = pgTable("tm_change_history", {
+  id: serial("id").primaryKey(),
+  source: text("source").notNull(),
+  sessionId: integer("session_id"),
+  targetMacro: integer("target_macro").notNull(),
+  oldTm: numeric("old_tm"),
+  newTm: numeric("new_tm").notNull(),
+  amrapWeight: numeric("amrap_weight"),
+  amrapReps: integer("amrap_reps"),
+  e1rm: numeric("e1rm"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const syncOps = pgTable("sync_ops", {
