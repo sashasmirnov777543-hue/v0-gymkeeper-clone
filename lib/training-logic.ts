@@ -103,13 +103,17 @@ export function epley1RM(weight: number, reps: number): number {
   return reps === 1 ? weight : weight * (1 + reps / 30);
 }
 
+/** Повторы сверх 10 не учитываем: Эпли завышает e1RM на длинных AMRAP. */
+export const AMRAP_REPS_CAP = 10;
+
 export function trainingMaxFromAmrap(
   weight: number,
   reps: number,
   factor = V9_TM_FACTOR,
   step = DEFAULT_WEIGHT_STEP,
 ): { e1rm: number; tm: number } {
-  const e1rm = epley1RM(weight, reps);
+  const cappedReps = Math.min(reps, AMRAP_REPS_CAP);
+  const e1rm = epley1RM(weight, cappedReps);
   return { e1rm, tm: roundToStep(e1rm * factor, step) };
 }
 
