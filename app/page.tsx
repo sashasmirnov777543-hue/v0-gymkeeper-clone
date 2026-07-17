@@ -133,6 +133,7 @@ export default async function HomePage() {
       </header>
 
       <main className="mx-auto max-w-lg px-4 py-4">
+        <BlockExhaustedBanner />
         {activeSessions.length > 0 && (
           <Link
             href={`/session/${activeSessions[0].id}`}
@@ -197,6 +198,7 @@ export default async function HomePage() {
         </div>
 
         <div className="flex flex-col gap-6">
+          <StickingPointCard />
           {macros.map(({ macro, cycles: mc }) => {
             const macroItems = mc.flatMap((c) =>
               blockWorkouts
