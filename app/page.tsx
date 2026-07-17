@@ -1,3 +1,5 @@
+import { StickingPointCard } from "@/components/sticking-point-card";
+import { BlockExhaustedBanner } from "@/components/block-exhausted-banner";
 import Link from "next/link"
 import { asc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
