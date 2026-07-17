@@ -48,6 +48,12 @@ import {
   type LoggedSetLite,
   type Recommendation,
 } from "@/lib/recommend";
+import {
+  isSpeedBench,
+  shouldStopExercise,
+  SPEED_DAY_STOP_MESSAGE,
+  VELOCITY_STOP_MESSAGE,
+} from "@/lib/velocity-stop";
 
 type Exercise = {
   id: number;
@@ -516,6 +522,11 @@ function CurrentExercise({
   const hasTargets = Boolean(exercise.weightText || exercise.targetReps);
   const targetSetsNum = parseFirstInt(exercise.targetSets);
   const allSetsDone = targetSetsNum != null && doneSets.length >= targetSetsNum;
+  const speedDay = isSpeedBench(exercise.name);
+const velocityStop = shouldStopExercise(
+  doneSets.map((s) => s.velocity),
+  { speedDay },
+);
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4">
@@ -747,7 +758,11 @@ function CurrentExercise({
           </ul>
         </div>
       )}
-
+{velocityStop && (
+  <div className="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-xs font-medium text-red-500">
+    {speedDay ? SPEED_DAY_STOP_MESSAGE : VELOCITY_STOP_MESSAGE}
+  </div>
+)}
       {hasTargets && !offline && (
         <ExerciseHistory exerciseName={exercise.name} />
       )}
