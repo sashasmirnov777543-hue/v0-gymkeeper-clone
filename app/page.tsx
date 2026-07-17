@@ -5,7 +5,16 @@ import { appSettings, cycles, workouts, sessions } from "@/lib/db/schema"
 import { BottomNav } from "@/components/bottom-nav"
 import { BlockSwitcher } from "@/components/block-switcher"
 import { AppVersion } from "@/components/app-version"
-import { Bike, ChevronRight, Dumbbell, Flame } from "lucide-react"
+import { hypertrophyBlockStatus } from "@/lib/hypertrophy-exit"
+import { analyzeStickingPoint } from "@/lib/sticking-point"
+import {
+  AlertTriangle,
+  Bike,
+  ChevronRight,
+  Crosshair,
+  Dumbbell,
+  Flame,
+} from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
@@ -36,14 +45,23 @@ const BLOCK_HEADER = {
 } as const
 
 export default async function HomePage() {
-  const [allCycles, allWorkouts, settingsRows, activeSessions, doneSessions] =
-    await Promise.all([
-      db.select().from(cycles).orderBy(asc(cycles.sortOrder)),
-      db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
-      db.select().from(appSettings),
-      db.select().from(sessions).where(eq(sessions.status, "active")),
-      db.select().from(sessions).where(eq(sessions.status, "completed")),
-    ])
+  const [
+    allCycles,
+    allWorkouts,
+    settingsRows,
+    activeSessions,
+    doneSessions,
+    h2Status,
+    stickingPoint,
+  ] = await Promise.all([
+    db.select().from(cycles).orderBy(asc(cycles.sortOrder)),
+    db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
+    db.select().from(appSettings),
+    db.select().from(sessions).where(eq(sessions.status, "active")),
+    db.select().from(sessions).where(eq(sessions.status, "completed")),
+    hypertrophyBlockStatus(),
+    analyzeStickingPoint(),
+  ])
 
   const settings = Object.fromEntries(settingsRows.map((s) => [s.key, s.value]))
   const activeBlock = (settings.active_block === "h2" ? "h2" : "v9") as
