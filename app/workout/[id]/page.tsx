@@ -8,6 +8,7 @@ import { getLastSetsByExerciseNames } from "@/app/actions/workout";
 import { BottomNav } from "@/components/bottom-nav";
 import { StartWorkoutButton } from "@/components/start-workout-button";
 import { ExerciseGuideButton } from "@/components/exercise-guide-sheet";
+import { ProgramNotes } from "@/components/program-notes";
 import { ArrowLeft, Bike, Heart, History, Timer } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -90,9 +91,7 @@ export default async function WorkoutPage({
             {workout.title}
           </h1>
           {workout.notes && (
-            <p className="mt-1 text-sm text-muted-foreground">
-              {workout.notes}
-            </p>
+            <ProgramNotes text={workout.notes} compact />
           )}
         </div>
       </header>
@@ -137,9 +136,7 @@ export default async function WorkoutPage({
               </p>
             </div>
             {cycle?.notes && (
-              <p className="rounded-lg border border-border bg-card px-4 py-3 text-pretty text-sm leading-relaxed text-muted-foreground">
-                {cycle.notes}
-              </p>
+              <ProgramNotes text={cycle.notes} label="План цикла" />
             )}
           </div>
         ) : (
@@ -274,9 +271,7 @@ export default async function WorkoutPage({
             )}
 
             {cycle?.notes && (
-              <p className="rounded-lg border border-border bg-card px-4 py-3 text-pretty text-sm leading-relaxed text-muted-foreground">
-                {cycle.notes}
-              </p>
+              <ProgramNotes text={cycle.notes} label="План цикла" />
             )}
           </div>
         )}

@@ -13,29 +13,29 @@ export const dynamic = "force-dynamic"
 
 const MACRO_TITLES: Record<string, Record<number, string>> = {
   v9: {
-    1: "Макроцикл 1 — Объёмная база + проход середины",
-    2: "Макроцикл 2 — Тяжёлые веса и кластеры",
-    3: "Макроцикл 3 — Реализация + пик",
+    1: "Этап 1 — техника и вход (циклы 1–4)",
+    2: "Этап 2 — силовое накопление (циклы 5–8)",
+    3: "Этап 3 — реализация и тест (циклы 9–13)",
   },
   h2: {
-    1: "Макро 1 — Накопление + разгрузка (циклы 1–5)",
-    2: "Макро 2 — Интенсификация (циклы 6–8)",
-    3: "Мост к V9 + тестовый AMRAP (цикл 9)",
+    1: "Этап 1 — накопление (циклы 1–5)",
+    2: "Этап 2 — интенсификация (циклы 6–8)",
+    3: "Этап 3 — переход к V9 (цикл 9)",
   },
-}
+};
 
 const BLOCK_HEADER = {
   v9: {
-    kicker: "Жимовой блок",
-    title: "13 циклов · цель 123–127 кг",
-    subtitle: "≈3,5 месяца · 2 тренировки со штангой в цикле",
+    kicker: "Силовой блок · V9",
+    title: "13 циклов · цель 122,5–125 кг",
+    subtitle: "104 дня · 2 силовые и 2 кардио-сессии в каждом 8-дневном цикле",
   },
   h2: {
-    kicker: "Гипертрофия / ОФП — H2",
-    title: "9 циклов · база перед V9",
-    subtitle: "≈2,5 месяца · грудь 2×, растянутая позиция, кардио Z2",
+    kicker: "Гипертрофия и ОФП · H2",
+    title: "9 циклов · фундамент перед V9",
+    subtitle: "72 дня · контролируемый объём, техника жима и спокойное кардио",
   },
-} as const
+} as const;
 
 export default async function HomePage() {
   const [allCycles, allWorkouts, settingsRows, activeSessions, doneSessions] =
@@ -74,21 +74,17 @@ export default async function HomePage() {
 
   const orderedCycles = [...blockCycles].sort((a, b) => a.sortOrder - b.sortOrder)
 
-  // Сквозная нумерация С/К по всему блоку (С1…С13, К1…)
-  const labelByWorkoutId = new Map<
-    number,
-    { label: string; isCardio: boolean }
-  >()
-  let sCount = 0
-  let kCount = 0
+  // Компактная маркировка: номер цикла + день B1–B4.
+  const labelByWorkoutId = new Map<number, { label: string; isCardio: boolean }>();
   for (const c of orderedCycles) {
-    const cw = blockWorkouts
+    const cycleWorkouts = blockWorkouts
       .filter((w) => w.cycleId === c.id)
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-    for (const w of cw) {
-      const isCardio = w.kind === "cardio"
-      const label = isCardio ? `К${++kCount}` : `С${++sCount}`
-      labelByWorkoutId.set(w.id, { label, isCardio })
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    for (const w of cycleWorkouts) {
+      labelByWorkoutId.set(w.id, {
+        label: `${c.number}·${w.label}`,
+        isCardio: w.kind === "cardio",
+      });
     }
   }
 
@@ -218,11 +214,11 @@ export default async function HomePage() {
                   </h2>
                   {activeBlock === "v9" && (
                     <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                      ТМ {tmByMacro[macro]} кг
+                      RMref {tmByMacro[macro]} кг
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-5 gap-2 sm:grid-cols-6">
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
                   {macroItems.map(({ w, cycle }) => {
                     const meta = labelByWorkoutId.get(w.id)
                     const label = meta?.label ?? "?"
