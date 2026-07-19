@@ -236,36 +236,69 @@ export default async function WorkoutPage({
 
             {restExercises.length > 0 && (
               <section>
-                <h3 className="mb-2 text-sm font-semibold text-muted-foreground">
-                  Далее в тренировке
-                </h3>
-                <ol className="flex flex-col gap-2">
-                  {restExercises.map((ex, i) => (
-                    <li
-                      key={ex.id}
-                      className="flex items-start justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium leading-snug">
-                          <span className="font-mono text-sm text-muted-foreground">
-                            {i + 2}.{" "}
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground">
+                    Далее в тренировке
+                  </h3>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    ещё {restExercises.length}
+                  </span>
+                </div>
+                <ol className="flex flex-col gap-2.5">
+                  {restExercises.map((ex, i) => {
+                    const hasCompactPrescription =
+                      Boolean(ex.targetSets) &&
+                      Boolean(ex.targetReps) &&
+                      (ex.targetReps?.length ?? 0) <= 18;
+
+                    return (
+                      <li
+                        key={ex.id}
+                        className="overflow-hidden rounded-xl border border-border bg-card"
+                      >
+                        <div className="flex items-start gap-3 px-4 py-3.5">
+                          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary font-mono text-xs font-semibold text-muted-foreground">
+                            {i + 2}
                           </span>
-                          {ex.name}
-                        </p>
-                        {ex.weightText && (
-                          <p className="mt-0.5 font-mono text-sm text-primary">
-                            {ex.weightText}
-                          </p>
-                        )}
-                      </div>
-                      {(ex.targetReps || ex.targetSets) && (
-                        <p className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-sm text-secondary-foreground">
-                          {ex.targetReps ?? "—"}
-                          {ex.targetSets ? ` × ${ex.targetSets}` : ""}
-                        </p>
-                      )}
-                    </li>
-                  ))}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-pretty font-semibold leading-snug">
+                                {ex.name}
+                              </p>
+                              {hasCompactPrescription && (
+                                <span className="shrink-0 rounded-md bg-secondary px-2 py-1 font-mono text-xs font-semibold text-secondary-foreground">
+                                  {ex.targetSets} × {ex.targetReps}
+                                </span>
+                              )}
+                            </div>
+
+                            {ex.weightText && (
+                              <p className="mt-1 font-mono text-sm font-semibold leading-relaxed text-primary">
+                                {ex.weightText}
+                              </p>
+                            )}
+
+                            {!hasCompactPrescription && ex.targetReps && (
+                              <div className="mt-2 rounded-lg bg-secondary/65 px-3 py-2">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Выполнение
+                                </p>
+                                <p className="mt-0.5 text-pretty text-sm leading-relaxed text-secondary-foreground">
+                                  {ex.targetReps}
+                                </p>
+                              </div>
+                            )}
+
+                            {ex.comment && (
+                              <p className="mt-2 text-pretty text-xs leading-relaxed text-muted-foreground">
+                                {ex.comment}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ol>
               </section>
             )}
