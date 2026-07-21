@@ -1,6 +1,6 @@
-import { epley1RM, roundToStep } from "./training-logic.ts"
+import { roundToStepHalfDown as roundToStep } from "./program/rmref.ts"
 
-export { epley1RM, roundToStep }
+export { roundToStep }
 
 // Логика рекомендации веса на основе RIR (Reps In Reserve)
 
@@ -50,7 +50,7 @@ function roundHalfAway(x: number): number {
   return Math.sign(x) * Math.round(Math.abs(x))
 }
 
-/** Вес в программе задан процентом от ТМ ("70 % (77), RPE 7")? Тогда нагрузка фиксированная. */
+/** Вес в программе задан процентом от RMref ("70 % (77), RPE 7")? Тогда нагрузка фиксированная. */
 export function isPercentPrescribed(weightText: string | null): boolean {
   return weightText != null && weightText.includes("%")
 }
@@ -64,7 +64,7 @@ export function isPercentPrescribed(weightText: string | null): boolean {
  * ниже диапазона (тяжелее) -> снизить.
  * Корректировка пропорциональна выходу за границу, максимум ±2 шага (±5 кг).
  *
- * `fixedLoad` — вес задан программой (процент от ТМ, фиксированные повторения):
+ * `fixedLoad` — вес задан программой (процент от RMref, фиксированные повторения):
  * выше предписанного веса НЕ рекомендуем. Запас сверх цели в таких циклах —
  * это план (например, намеренно недогруженный вводный цикл), а не повод
  * накидывать блины. Снижение при перегрузе остаётся.
@@ -107,7 +107,7 @@ export function recommendWeight(
   // одна "ступень" корректировки за каждый полный RIR выхода за цель, максимум 2
   let steps = Math.max(-2, Math.min(2, roundHalfAway(delta)))
 
-  // Фиксированная нагрузка (% от ТМ): вверх от предписанного веса не уходим.
+  // Фиксированная нагрузка (% от RMref): вверх от предписанного веса не уходим.
   if (fixedLoad && steps > 0) {
     if (prescribed == null || maxWeight >= prescribed) {
       const base = prescribed != null ? Math.min(maxWeight, prescribed) : maxWeight
