@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Pwa } from '@/components/pwa'
+import { CoachDock } from '@/components/coach/coach-dock'
 import './globals.css'
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
@@ -11,9 +12,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Жимовой блок — трекер тренировок',
+  title: 'GymKeeper · H2 → V9',
   description:
-    'Персональная программа жима лёжа: 13 циклов, логирование подходов и автоподбор веса по RIR',
+    '176-дневная программа H2→V9: календарь 2/2, RMref, светофор готовности, журнал, RHR и Gemini 3.5 Flash',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -38,8 +39,8 @@ export const viewport: Viewport = {
   themeColor: '#18181b',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
+  userScalable: true,
 }
 
 export default function RootLayout({
@@ -54,6 +55,7 @@ export default function RootLayout({
     >
       <body className="font-sans antialiased">
         {children}
+        <CoachDock />
         <Pwa />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

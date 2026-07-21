@@ -5,11 +5,11 @@ import { usePathname } from "next/navigation"
 import { Dumbbell, History, BarChart3, BookOpen, Settings } from "lucide-react"
 
 const items = [
-  { href: "/", label: "Программа", icon: Dumbbell },
+  { href: "/", label: "Сегодня", icon: Dumbbell },
   { href: "/technique", label: "Техника", icon: BookOpen },
   { href: "/history", label: "История", icon: History },
   { href: "/stats", label: "Прогресс", icon: BarChart3 },
-  { href: "/settings", label: "TM", icon: Settings },
+  { href: "/settings", label: "Настр.", icon: Settings },
 ]
 
 export function BottomNav() {

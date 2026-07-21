@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function TechniquePage() {
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-40">
       <header className="border-b border-border bg-card">
         <div className="mx-auto max-w-lg px-4 py-5">
           <p className="font-mono text-xs uppercase tracking-widest text-primary">

@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ensureSchema } from "@/lib/db/migrate";
-import { loggedSets, sessions, syncOps, workouts, workoutExercises } from "@/lib/db/schema";
 import {
-  applyAmrapTmRecalcInTransaction,
-  type TmRecalcResult,
-} from "@/lib/tm-recalc";
-import { readinessLevel, type ReadinessInput } from "@/lib/training-logic";
+  cycles,
+  loggedSets,
+  programState,
+  sessions,
+  syncOps,
+  workouts,
+  workoutExercises,
+} from "@/lib/db/schema";
+import { assessReadiness, type ReadinessInput } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -27,14 +31,31 @@ type OpPayload =
       weight: number | null;
       reps: number | null;
       rir: number | null;
+      rpe: number | null;
       velocity: "fast" | "normal" | "slow";
       stickingPoint: "chest" | "middle" | "lockout" | null;
+      isWarmup?: boolean;
+      pauseQuality?: string | null;
+      touchPoint?: string | null;
+      trajectoryQuality?: string | null;
+      techniqueSigns?: string[];
+      painScore?: number | null;
+      symptoms?: string[];
+      videoUrl?: string | null;
+    }
+  | {
+      kind: "updateSet";
+      sessionRef: number | string;
+      setId: number;
+      weight: number | null;
+      reps: number | null;
+      rir: number | null;
+      rpe: number | null;
     }
   | {
       kind: "finish";
       sessionRef: number | string;
       finishedAt: string;
-      proposedTm?: number;
     }
   | {
       kind: "cardioFinish";
@@ -44,6 +65,10 @@ type OpPayload =
       avgHr: number | null;
       speed: string | null;
       resistance: string | null;
+      modality?: string | null;
+      warmupMinutes?: number | null;
+      mainMinutes?: number | null;
+      cooldownMinutes?: number | null;
       cardioRpe: number;
       cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
       cardioSymptoms: string | null;
@@ -57,7 +82,6 @@ type StoredResult = {
   sessionId?: number;
   setId?: number;
   skipped?: boolean;
-  tmRecalc?: TmRecalcResult | null;
 };
 
 const UUID_RE =
@@ -72,6 +96,10 @@ export async function POST(req: Request) {
     ops = Array.isArray(body.ops) ? body.ops : [];
   } catch {
     return NextResponse.json({ error: "Некорректный запрос" }, { status: 400 });
+  }
+
+  if (ops.length > 200) {
+    return NextResponse.json({ error: "Слишком много операций" }, { status: 413 });
   }
 
   if (
@@ -104,7 +132,6 @@ export async function POST(req: Request) {
     result: StoredResult;
     replayed: boolean;
   }> = [];
-  const tmRecalcs: TmRecalcResult[] = [];
 
   const resolveRef = (ref: number | string): number | null =>
     typeof ref === "number" ? ref : (sessionMap.get(ref) ?? null);
@@ -133,18 +160,38 @@ export async function POST(req: Request) {
             result = { kind: "start", skipped: true };
             break;
           }
+          if (!op.readiness) throw new Error("Для старта нужна проверка готовности");
+          const assessment = assessReadiness(op.readiness);
+          if (assessment.level === "red") {
+            throw new Error("Красный статус блокирует тренировку и разминку");
+          }
+          const [program] = await tx
+            .select({ programVersion: cycles.programVersion })
+            .from(workouts)
+            .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
+            .where(eq(workouts.id, op.workoutId))
+            .limit(1);
           const inserted = await tx
             .insert(sessions)
             .values({
               workoutId: op.workoutId,
               startedAt: new Date(op.startedAt),
               status: "active",
-              ...(op.readiness
-                ? {
-                    ...op.readiness,
-                    readinessLevel: readinessLevel(op.readiness),
-                  }
-                : {}),
+              programVersion: program?.programVersion ?? "h2-v9-1.0",
+              sleepMinutes: op.readiness.sleepMinutes,
+              sleepQuality: op.readiness.sleepQuality,
+              shoulderPain: op.readiness.shoulderPain,
+              backPain: op.readiness.backPain,
+              energy: op.readiness.energy,
+              morningPulseDelta:
+                op.readiness.restingHeartRateTrend?.deltaFromBaselineBpm != null
+                  ? Math.round(op.readiness.restingHeartRateTrend.deltaFromBaselineBpm)
+                  : null,
+              readinessLevel: assessment.level,
+              readinessInput: op.readiness,
+              readinessReasons: assessment.reasonCodes,
+              adaptationPlan: assessment.permittedAction,
+              redFlags: op.readiness.clinicalStopFlags ?? {},
             })
             .onConflictDoNothing()
             .returning({ id: sessions.id });
@@ -170,7 +217,7 @@ export async function POST(req: Request) {
             result = { kind: "set", skipped: true };
             break;
           }
-          const [valid] = await tx.select({id:sessions.id}).from(sessions).innerJoin(workouts,eq(sessions.workoutId,workouts.id)).innerJoin(workoutExercises,eq(workoutExercises.workoutId,workouts.id)).where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active' and ${workoutExercises.id}=${op.workoutExerciseId}`).limit(1);
+          const [valid] = await tx.select({id:sessions.id}).from(sessions).innerJoin(workouts,eq(sessions.workoutId,workouts.id)).innerJoin(workoutExercises,eq(workoutExercises.workoutId,workouts.id)).where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active' and ${sessions.safetyStopped}=false and ${workoutExercises.id}=${op.workoutExerciseId}`).limit(1);
           if(!valid) throw new Error("Подход не принадлежит активной сессии");
           const [inserted] = await tx
             .insert(loggedSets)
@@ -181,11 +228,58 @@ export async function POST(req: Request) {
               weight: op.weight != null ? String(op.weight) : null,
               reps: op.reps,
               rir: op.rir,
+              rpe: op.rpe != null ? String(op.rpe) : null,
               velocity: op.velocity,
               stickingPoint: op.stickingPoint,
+              isWarmup: op.isWarmup ?? false,
+              pauseQuality: op.pauseQuality ?? null,
+              touchPoint: op.touchPoint ?? null,
+              trajectoryQuality: op.trajectoryQuality ?? null,
+              techniqueSigns: op.techniqueSigns ?? [],
+              painScore: op.painScore ?? null,
+              symptoms: op.symptoms ?? [],
+              videoUrl: op.videoUrl ?? null,
             })
             .returning({ id: loggedSets.id });
+          if (
+            op.symptoms?.some((value) =>
+              ["medical_symptom", "pain_changes_movement", "unsafe_loss_of_control"].includes(value),
+            )
+          ) {
+            await tx
+              .update(sessions)
+              .set({ safetyStopped: true })
+              .where(eq(sessions.id, sessionId));
+          }
           result = { kind: "set", sessionId, setId: inserted.id };
+          break;
+        }
+        case "updateSet": {
+          const sessionId = resolveRef(op.sessionRef);
+          if (sessionId == null) {
+            result = { kind: "updateSet", skipped: true };
+            break;
+          }
+          if (
+            (op.rpe != null && (!Number.isFinite(op.rpe) || op.rpe < 0 || op.rpe > 10)) ||
+            (op.rir != null && (!Number.isInteger(op.rir) || op.rir < 0 || op.rir > 10))
+          ) {
+            throw new Error("Некорректные RPE/RIR");
+          }
+          const updated = await tx
+            .update(loggedSets)
+            .set({
+              weight: op.weight != null ? String(op.weight) : null,
+              reps: op.reps,
+              rir: op.rir,
+              rpe: op.rpe != null ? String(op.rpe) : null,
+            })
+            .where(
+              sql`${loggedSets.id}=${op.setId} and ${loggedSets.sessionId}=${sessionId} and exists (select 1 from sessions where ${sessions.id}=${sessionId} and ${sessions.status}='active')`,
+            )
+            .returning({ id: loggedSets.id });
+          if (!updated.length) throw new Error("Подход не принадлежит активной сессии");
+          result = { kind: "updateSet", sessionId, setId: op.setId };
           break;
         }
         case "finish": {
@@ -194,18 +288,29 @@ export async function POST(req: Request) {
             result = { kind: "finish", skipped: true };
             break;
           }
-          await tx
+          const completed = await tx
             .update(sessions)
             .set({ status: "completed", finishedAt: new Date(op.finishedAt) })
-            .where(eq(sessions.id, sessionId));
-          const tmRecalc = await applyAmrapTmRecalcInTransaction(
-            tx,
-            sessionId,
-            {
-              proposedTm: op.proposedTm,
-            },
-          );
-          result = { kind: "finish", sessionId, tmRecalc };
+            .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`)
+            .returning({ workoutId: sessions.workoutId });
+          if (!completed.length) throw new Error("Сессия уже завершена или не найдена");
+          const [position] = await tx
+            .select({ dayOffset: cycles.dayOffset, dayInCycle: workouts.dayInCycle })
+            .from(workouts)
+            .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
+            .where(eq(workouts.id, completed[0].workoutId))
+            .limit(1);
+          if (position?.dayOffset != null && position.dayInCycle != null) {
+            const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+            await tx
+              .update(programState)
+              .set({
+                currentProgramDay: sql`greatest(${programState.currentProgramDay}, ${nextDay})`,
+                updatedAt: new Date(),
+              })
+              .where(eq(programState.profileKey, "primary"));
+          }
+          result = { kind: "finish", sessionId };
           break;
         }
         case "cardioFinish": {
@@ -214,7 +319,7 @@ export async function POST(req: Request) {
             result = { kind: "cardioFinish", skipped: true };
             break;
           }
-          await tx
+          const completed = await tx
             .update(sessions)
             .set({
               status: "completed",
@@ -223,21 +328,49 @@ export async function POST(req: Request) {
               avgHr: op.avgHr,
               cardioSpeed: op.speed,
               cardioResistance: op.resistance,
+              cardioModality: op.modality ?? null,
+              cardioWarmupMinutes: op.warmupMinutes ?? null,
+              cardioMainMinutes: op.mainMinutes ?? null,
+              cardioCooldownMinutes: op.cooldownMinutes ?? null,
               cardioRpe: op.cardioRpe,
               cardioTalkTest: op.cardioTalkTest,
               cardioSymptoms: op.cardioSymptoms,
             })
-            .where(eq(sessions.id, sessionId));
+            .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`)
+            .returning({ workoutId: sessions.workoutId });
+          if (!completed.length) throw new Error("Кардио уже завершено или не найдено");
+          const [position] = await tx
+            .select({ dayOffset: cycles.dayOffset, dayInCycle: workouts.dayInCycle })
+            .from(workouts)
+            .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
+            .where(eq(workouts.id, completed[0].workoutId))
+            .limit(1);
+          if (position?.dayOffset != null && position.dayInCycle != null) {
+            const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+            await tx
+              .update(programState)
+              .set({
+                currentProgramDay: sql`greatest(${programState.currentProgramDay}, ${nextDay})`,
+                updatedAt: new Date(),
+              })
+              .where(eq(programState.profileKey, "primary"));
+          }
           result = { kind: "cardioFinish", sessionId };
           break;
         }
         case "cancel": {
           const sessionId = resolveRef(op.sessionRef);
           if (sessionId != null) {
+            const [active] = await tx
+              .select({ id: sessions.id })
+              .from(sessions)
+              .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`)
+              .limit(1);
+            if (!active) throw new Error("Можно отменить только активную сессию");
+            await tx.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId));
             await tx
-              .delete(loggedSets)
-              .where(eq(loggedSets.sessionId, sessionId));
-            await tx.delete(sessions).where(eq(sessions.id, sessionId));
+              .delete(sessions)
+              .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`);
           }
           result = {
             kind: "cancel",
@@ -260,9 +393,8 @@ export async function POST(req: Request) {
     if (op.kind === "start" && processed.result.sessionId != null) {
       sessionMap.set(op.localKey, processed.result.sessionId);
     }
-    if (processed.result.tmRecalc) tmRecalcs.push(processed.result.tmRecalc);
     results.push({ operationId: op.operationId, ...processed });
   }
 
-  return NextResponse.json({ ok: true, results, tmRecalcs });
+  return NextResponse.json({ ok: true, results });
 }
