@@ -1,11 +1,10 @@
 "use client";
 
-// feat: пошаговый режим — одно упражнение на экран (редизайн)
-
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -23,9 +22,7 @@ import { ExerciseHistory } from "@/components/exercise-history";
 import { HeartRateBadge } from "@/components/heart-rate";
 import { RestTimer } from "@/components/rest-timer";
 import { SessionNotes } from "@/components/session-notes";
-import { WarmupPlates } from "@/components/warmup-plates";
-import { MyorepsPanel } from "@/components/myoreps-panel";
-import { trainingMaxFromAmrap } from "@/lib/training-logic";
+import { SingleGate } from "@/components/single-gate";
 import { useWakeLock } from "@/lib/heart-rate";
 import { unlockAudio } from "@/lib/sound";
 import {
@@ -39,6 +36,8 @@ import {
   cancelLocalSession,
   finishLocalSession,
   pushOp,
+  removeQueuedLocalSet,
+  replaceQueuedLocalSet,
   saveLocalSets,
 } from "@/lib/offline";
 import {
@@ -49,13 +48,11 @@ import {
   type Recommendation,
 } from "@/lib/recommend";
 import {
-  isSpeedBench,
-  shouldStopExercise,
-  SPEED_DAY_STOP_MESSAGE,
-  VELOCITY_STOP_MESSAGE,
-} from "@/lib/velocity-stop";
+  decideTechnicalStop,
+  type TechnicalSign,
+} from "@/lib/technical-stop";
 
-type Exercise = {
+export type SessionExercise = {
   id: number;
   name: string;
   weightText: string | null;
@@ -63,44 +60,76 @@ type Exercise = {
   targetSets: string | null;
   targetRirMin: number | null;
   targetRirMax: number | null;
+  targetRpeMin?: number | null;
+  targetRpeMax?: number | null;
+  role?: string;
+  isOptional?: boolean;
+  condition?: string | null;
   comment: string | null;
   restSeconds: number | null;
   tempo?: string | null;
 };
 
-type SetRow = {
+export type SessionSetRow = {
   id: number;
   workoutExerciseId: number;
   setNumber: number;
   weight: number | null;
   reps: number | null;
   rir: number | null;
+  rpe?: number | null;
   velocity?: string | null;
   stickingPoint?: string | null;
+  isWarmup?: boolean;
+  pauseQuality?: string | null;
+  touchPoint?: string | null;
+  trajectoryQuality?: string | null;
+  techniqueSigns?: unknown;
+  painScore?: number | null;
+  symptoms?: unknown;
+  videoUrl?: string | null;
 };
 
-function fmtRest(sec: number): string {
-  if (sec < 60) return `${sec} с`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return s ? `${m} мин ${s} с` : `${m} мин`;
+type SetDraft = {
+  weight: number | null;
+  reps: number | null;
+  rir: number | null;
+  rpe: number | null;
+  velocity: "fast" | "normal" | "slow";
+  stickingPoint: "chest" | "middle" | "lockout" | null;
+  isWarmup: boolean;
+  pauseQuality: "clean" | "short" | "lost" | null;
+  touchPoint: "stable" | "high" | "low" | "variable" | null;
+  trajectoryQuality: "clean" | "asymmetric" | "deviated" | null;
+  techniqueSigns: TechnicalSign[];
+  painScore: number | null;
+  painChangesMovement: boolean;
+  medicalSymptom: boolean;
+  unsafeLossOfControl: boolean;
+  videoUrl: string | null;
+};
+
+function fmtRest(seconds: number): string {
+  if (seconds < 60) return `${seconds} с`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes} мин ${rest} с` : `${minutes} мин`;
 }
 
 function parseFirstInt(text: string | null): number | null {
-  if (!text) return null;
-  const m = text.match(/\d+/);
-  return m ? Number.parseInt(m[0], 10) : null;
+  const match = text?.match(/\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function isBenchExercise(exercise: SessionExercise) {
+  return /жим|bench|spoto/i.test(`${exercise.name} ${exercise.role ?? ""}`);
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 flex-col">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <span className="text-pretty font-mono text-sm font-semibold text-foreground">
-        {value}
-      </span>
+      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-pretty font-mono text-sm font-semibold text-foreground">{value}</span>
     </div>
   );
 }
@@ -120,95 +149,59 @@ export function SessionLogger({
     startedAt: string;
     notes?: string | null;
     readinessLevel?: string | null;
+    readinessReasons?: unknown;
+    adaptationPlan?: unknown;
+    safetyStopped?: boolean;
   };
-  workout: { id: number; title: string };
+  workout: { id: number; title: string; slot?: string; branches?: unknown };
   cycle: { number: number; name: string; block: string };
-  exercises: Exercise[];
-  initialSets: SetRow[];
+  exercises: SessionExercise[];
+  initialSets: SessionSetRow[];
   lastSetsByName: Record<string, LoggedSetLite[]>;
-  /** Ключ локальной (офлайн) сессии — все операции идут в очередь синхронизации */
   offlineKey?: string;
 }) {
   const router = useRouter();
-  const [sets, setSets] = useState<SetRow[]>(initialSets);
-  const [idx, setIdx] = useState(0);
+  const [sets, setSets] = useState<SessionSetRow[]>(initialSets);
+  const [index, setIndex] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [rest, setRest] = useState<{
     seconds: number;
     label: string;
-    rec: Recommendation;
+    recommendation: Recommendation;
   } | null>(null);
   const readOnly = session.status !== "active";
-
-  // экран не гаснет, пока тренировка активна
   useWakeLock(!readOnly);
-
-  // ссылка на сессию для очереди: локальный ключ или реальный id
   const sessionRef: number | string = offlineKey ?? session.id;
 
-  const persistLocal = (next: SetRow[]) => {
+  const persistLocal = (next: SessionSetRow[]) => {
     if (offlineKey) saveLocalSets(offlineKey, next);
   };
 
-  const handleFinish = () => {
-    let proposedTm: number | undefined;
-    const amrapExerciseIds = new Set(
-      exercises
-        .filter((exercise) =>
-          exercise.name.toLocaleLowerCase("ru-RU").includes("amrap"),
-        )
-        .map((exercise) => exercise.id),
-    );
-    const candidates = sets
-      .filter(
-        (set) =>
-          amrapExerciseIds.has(set.workoutExerciseId) && set.weight && set.reps,
-      )
-      .map((set) => ({
-        set,
-        calc: trainingMaxFromAmrap(set.weight as number, set.reps as number),
-      }))
-      .sort((a, b) => b.calc.e1rm - a.calc.e1rm);
-    if (candidates.length > 0) {
-      const best = candidates[0];
-      const entered = prompt(
-        `AMRAP ${best.set.weight} кг × ${best.set.reps}\ne1RM: ${best.calc.e1rm.toFixed(1)} кг\nTM по правилу 0,90: ${best.calc.tm} кг\n\nПодтверди или измени TM:`,
-        String(best.calc.tm),
-      );
-      if (entered == null) return;
-      const parsed = Number(entered.replace(",", "."));
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        alert("TM должен быть положительным числом");
-        return;
-      }
-      proposedTm = parsed;
-    }
+  function handleFinish() {
     if (offlineKey) {
-      finishLocalSession(offlineKey, proposedTm);
+      finishLocalSession(offlineKey);
       router.push("/history");
       return;
     }
     startTransition(async () => {
       try {
-        await finishSession(session.id, proposedTm);
-      } catch (err) {
-        // офлайн: ставим в очередь и уходим
-        if (isOffline(err)) {
+        await finishSession(session.id);
+      } catch (error) {
+        if (isOffline(error)) {
           pushOp({
             kind: "finish",
             sessionRef,
             finishedAt: new Date().toISOString(),
-            proposedTm,
           });
           router.push("/history");
         } else {
-          throw err;
+          throw error;
         }
       }
     });
-  };
+  }
 
-  const handleCancel = () => {
+  function handleCancel() {
     if (offlineKey) {
       cancelLocalSession(offlineKey);
       router.push("/");
@@ -217,217 +210,143 @@ export function SessionLogger({
     startTransition(async () => {
       try {
         await cancelSession(session.id);
-      } catch (err) {
-        if (isOffline(err)) {
+      } catch (error) {
+        if (isOffline(error)) {
           pushOp({ kind: "cancel", sessionRef });
           router.push("/");
         } else {
-          throw err;
+          throw error;
         }
       }
     });
-  };
+  }
 
   const setsByExercise = useMemo(() => {
-    const map: Record<number, SetRow[]> = {};
-    for (const s of sets) {
-      (map[s.workoutExerciseId] ??= []).push(s);
-    }
+    const map: Record<number, SessionSetRow[]> = {};
+    for (const set of sets) (map[set.workoutExerciseId] ??= []).push(set);
     return map;
   }, [sets]);
 
-  const totalLogged = sets.length;
-  const safeIdx = Math.min(Math.max(idx, 0), Math.max(0, exercises.length - 1));
-  const current = exercises[safeIdx];
-  const isFirst = safeIdx <= 0;
-  const isLast = safeIdx >= exercises.length - 1;
-
-  const goPrev = () => setIdx((i) => Math.max(0, i - 1));
-  const goNext = () => setIdx((i) => Math.min(exercises.length - 1, i + 1));
+  const safeIndex = Math.min(Math.max(index, 0), Math.max(0, exercises.length - 1));
+  const current = exercises[safeIndex];
+  const isFirst = safeIndex === 0;
+  const isLast = safeIndex >= exercises.length - 1;
+  const goPrevious = () => setIndex((value) => Math.max(0, value - 1));
+  const goNext = () => setIndex((value) => Math.min(exercises.length - 1, value + 1));
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col pb-36">
+    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col pb-52">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-3">
-          <Link
-            href={`/workout/${workout.id}`}
-            className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary"
-            aria-label="Назад к тренировке"
-          >
+          <Link href={`/workout/${workout.id}`} className="grid size-9 place-items-center rounded-md text-muted-foreground" aria-label="Назад">
             <ArrowLeft className="size-5" />
           </Link>
           <div className="min-w-0 flex-1">
-            <p className="text-xs text-muted-foreground">
-              Цикл {cycle.number} — {cycle.name}
-            </p>
-            <h1 className="truncate text-base font-semibold">
-              {workout.title}
-            </h1>
+            <p className="text-xs text-muted-foreground">{cycle.block.toUpperCase()} · цикл {cycle.number} · {workout.slot ?? ""}</p>
+            <h1 className="truncate text-base font-semibold">{workout.title}</h1>
           </div>
-          <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground">
-            {totalLogged} подх.
-          </span>
+          <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium">{sets.length} подх.</span>
           <HeartRateBadge />
         </div>
         {exercises.length > 1 && (
           <div className="mt-2 flex items-center gap-1" aria-hidden="true">
-            {exercises.map((ex, i) => {
-              const has = (setsByExercise[ex.id]?.length ?? 0) > 0;
-              return (
-                <span
-                  key={ex.id}
-                  className={`h-1.5 flex-1 rounded-full ${
-                    i === safeIdx
-                      ? "bg-primary"
-                      : has
-                        ? "bg-primary/40"
-                        : "bg-secondary"
-                  }`}
-                />
-              );
-            })}
+            {exercises.map((exercise, position) => (
+              <span key={exercise.id} className={`h-1.5 flex-1 rounded-full ${position === safeIndex ? "bg-primary" : (setsByExercise[exercise.id]?.length ?? 0) > 0 ? "bg-primary/40" : "bg-secondary"}`} />
+            ))}
           </div>
         )}
       </header>
 
       {session.readinessLevel && (
-        <div
-          className={`mx-4 mt-3 rounded-lg border p-3 text-sm readiness-${session.readinessLevel}`}
-        >
-          <strong>
-            Готовность:{" "}
-            {session.readinessLevel === "green"
-              ? "зелёная"
-              : session.readinessLevel === "yellow"
-                ? "жёлтая"
-                : session.readinessLevel === "orange"
-                  ? "оранжевая"
-                  : "красная"}
-          </strong>
-          {(session.readinessLevel === "orange" ||
-            session.readinessLevel === "red") && (
-            <p className="mt-1 text-muted-foreground">
-              Мини-тейпер включён: изоляция и миорепсы скрыты.
-            </p>
-          )}
-        </div>
+        <section className={`mx-4 mt-3 rounded-xl border p-4 readiness-${session.readinessLevel}`}>
+          <strong>Готовность: {readinessName(session.readinessLevel)}</strong>
+          <p className="mt-1 text-sm text-muted-foreground">{readinessAction(session.readinessLevel)}</p>
+        </section>
       )}
 
       {current ? (
         <CurrentExercise
           key={current.id}
           exercise={current}
-          position={safeIdx + 1}
+          position={safeIndex + 1}
           total={exercises.length}
           doneSets={setsByExercise[current.id] ?? []}
           lastTimeSets={lastSetsByName[current.name] ?? []}
           readOnly={readOnly}
+          sessionRef={sessionRef}
+          offline={Boolean(offlineKey)}
+          readinessLevel={session.readinessLevel}
+          sessionSafetyStopped={session.safetyStopped === true}
           onLogged={(row) =>
-            setSets((prev) => {
-              const next = [...prev, row];
+            setSets((previous) => {
+              const next = [...previous, row];
               persistLocal(next);
               return next;
             })
           }
-          onReplaceId={(tempId, realId) =>
-            setSets((prev) =>
-              prev.map((s) => (s.id === tempId ? { ...s, id: realId } : s)),
+          onReplaceId={(temporaryId, realId) =>
+            setSets((previous) =>
+              previous.map((set) =>
+                set.id === temporaryId ? { ...set, id: realId } : set,
+              ),
             )
           }
           onDeleted={(setId) =>
-            setSets((prev) => {
-              const next = prev.filter((s) => s.id !== setId);
+            setSets((previous) => {
+              const next = previous.filter((set) => set.id !== setId);
               persistLocal(next);
               return next;
             })
           }
-          onUpdated={(setId, weight, reps, rir) =>
-            setSets((prev) => {
-              const next = prev.map((s) =>
-                s.id === setId ? { ...s, weight, reps, rir } : s,
+          onUpdated={(setId, values) =>
+            setSets((previous) => {
+              const next = previous.map((set) =>
+                set.id === setId ? { ...set, ...values } : set,
               );
               persistLocal(next);
               return next;
             })
           }
-          sessionRef={sessionRef}
-          offline={Boolean(offlineKey)}
-          onRest={(seconds, label, rec) => setRest({ seconds, label, rec })}
+          onRest={(seconds, label, recommendation) =>
+            setRest({ seconds, label, recommendation })
+          }
           onAdvance={isLast ? undefined : goNext}
-          cycleNumber={cycle.number}
-          block={cycle.block}
-          readinessLevel={session.readinessLevel}
         />
       ) : (
-        <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-          В этой тренировке нет упражнений.
+        <div className="mx-4 mt-4 rounded-xl border border-destructive/40 bg-destructive/10 p-5 text-sm">
+          <strong>Силовая часть недоступна.</strong>
+          <p className="mt-1 text-muted-foreground">
+            {session.readinessLevel === "red"
+              ? "Красный статус блокирует тренировку и разминку."
+              : "В этой сессии нет доступных упражнений."}
+          </p>
         </div>
       )}
 
       {!offlineKey && isLast && (
         <div className="px-4 pb-2">
-          <SessionNotes
-            sessionId={session.id}
-            initialNotes={session.notes ?? null}
-            readOnly={readOnly}
-          />
+          <SessionNotes sessionId={session.id} initialNotes={session.notes ?? null} readOnly={readOnly} />
         </div>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-background/95 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur">
         <div className="mx-auto w-full max-w-lg px-4 py-3">
           <div className="flex gap-3">
-            <Button
-              variant="outline"
-              className="flex-1 bg-transparent"
-              disabled={isFirst}
-              onClick={goPrev}
-            >
-              <ArrowLeft className="size-4" />
-              Назад
+            <Button variant="outline" className="flex-1 bg-transparent" disabled={isFirst || exercises.length === 0} onClick={goPrevious}>
+              <ArrowLeft className="size-4" /> Назад
             </Button>
             {readOnly ? (
-              isLast ? (
-                <Button render={<Link href="/history" />} className="flex-[2]">
-                  <History className="size-4" />К истории
-                </Button>
-              ) : (
-                <Button className="flex-[2]" onClick={goNext}>
-                  Следующее упражнение
-                  <ArrowRight className="size-4" />
-                </Button>
-              )
+              <Button render={<Link href="/history" />} className="flex-[2]"><History className="size-4" /> К истории</Button>
             ) : isLast ? (
-              <Button
-                className="flex-[2]"
-                disabled={isPending || totalLogged === 0}
-                onClick={handleFinish}
-              >
-                <Check className="size-4" />
-                Завершить тренировку
+              <Button className="flex-[2]" disabled={isPending || sets.length === 0 || session.readinessLevel === "red"} onClick={handleFinish}>
+                <Check className="size-4" /> Завершить
               </Button>
             ) : (
-              <Button className="flex-[2]" onClick={goNext}>
-                Следующее упражнение
-                <ArrowRight className="size-4" />
-              </Button>
+              <Button className="flex-[2]" onClick={goNext}>Следующее <ArrowRight className="size-4" /></Button>
             )}
           </div>
           {!readOnly && (
-            <button
-              type="button"
-              disabled={isPending}
-              onClick={() => {
-                if (
-                  confirm(
-                    "Отменить тренировку? Все записанные подходы будут удалены.",
-                  )
-                ) {
-                  handleCancel();
-                }
-              }}
-              className="mt-2 w-full text-center text-xs text-muted-foreground hover:text-destructive"
-            >
+            <button type="button" disabled={isPending} onClick={() => confirm("Отменить тренировку? Записанные подходы будут удалены.") && handleCancel()} className="mt-2 w-full text-center text-xs text-muted-foreground hover:text-destructive">
               Отменить тренировку
             </button>
           )}
@@ -435,12 +354,7 @@ export function SessionLogger({
       </div>
 
       {rest && (
-        <RestTimer
-          seconds={rest.seconds}
-          label={rest.label}
-          recommendation={rest.rec}
-          onClose={() => setRest(null)}
-        />
+        <RestTimer seconds={rest.seconds} label={rest.label} recommendation={rest.recommendation} onClose={() => setRest(null)} />
       )}
     </main>
   );
@@ -453,54 +367,50 @@ function CurrentExercise({
   doneSets,
   lastTimeSets,
   readOnly,
+  sessionRef,
+  offline,
+  readinessLevel,
+  sessionSafetyStopped,
   onLogged,
   onReplaceId,
   onDeleted,
   onUpdated,
-  sessionRef,
-  offline,
   onRest,
   onAdvance,
-  cycleNumber,
-  block,
-  readinessLevel,
 }: {
-  exercise: Exercise;
+  exercise: SessionExercise;
   position: number;
   total: number;
-  doneSets: SetRow[];
+  doneSets: SessionSetRow[];
   lastTimeSets: LoggedSetLite[];
   readOnly: boolean;
-  onLogged: (row: SetRow) => void;
-  onReplaceId: (tempId: number, realId: number) => void;
-  onDeleted: (setId: number) => void;
-  onUpdated: (
-    setId: number,
-    weight: number | null,
-    reps: number | null,
-    rir: number | null,
-  ) => void;
   sessionRef: number | string;
   offline: boolean;
-  onRest: (seconds: number, label: string, rec: Recommendation) => void;
-  onAdvance?: () => void;
-  cycleNumber: number;
-  block: string;
   readinessLevel?: string | null;
+  sessionSafetyStopped: boolean;
+  onLogged: (row: SessionSetRow) => void;
+  onReplaceId: (temporaryId: number, realId: number) => void;
+  onDeleted: (setId: number) => void;
+  onUpdated: (setId: number, values: Partial<SessionSetRow>) => void;
+  onRest: (seconds: number, label: string, recommendation: Recommendation) => void;
+  onAdvance?: () => void;
 }) {
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [singleAllowed, setSingleAllowed] = useState(false);
+  const conditionalSingle = Boolean(
+    exercise.isOptional &&
+      exercise.targetReps === "1" &&
+      (exercise.role?.includes("conditional") || exercise.role?.includes("single_rehearsal")),
+  );
   const prescribed = parsePrescribedWeight(exercise.weightText);
-  // вес задан процентом от ТМ -> нагрузка фиксирована программой, вверх не гоним
   const fixedLoad = isPercentPrescribed(exercise.weightText);
-
-  // Рекомендация: сперва по подходам ТЕКУЩЕЙ сессии, иначе по прошлой тренировке
-  const rec: Recommendation = useMemo(() => {
-    const current: LoggedSetLite[] = doneSets.map((s) => ({
-      weight: s.weight,
-      reps: s.reps,
-      rir: s.rir,
+  const recommendation = useMemo(() => {
+    const current = doneSets.map((set) => ({
+      weight: set.weight,
+      reps: set.reps,
+      rir: set.rir,
     }));
-    const source = current.some((s) => s.rir != null && s.weight != null)
+    const source = current.some((set) => set.rir != null && set.weight != null)
       ? current
       : lastTimeSets;
     return recommendWeight(
@@ -510,670 +420,457 @@ function CurrentExercise({
       prescribed,
       { fixedLoad },
     );
-  }, [
-    doneSets,
-    lastTimeSets,
-    exercise.targetRirMin,
-    exercise.targetRirMax,
-    prescribed,
-    fixedLoad,
-  ]);
+  }, [doneSets, exercise.targetRirMax, exercise.targetRirMin, fixedLoad, lastTimeSets, prescribed]);
 
+  const latest = doneSets.at(-1);
+  const latestSigns = Array.isArray(latest?.techniqueSigns)
+    ? (latest.techniqueSigns.filter((sign): sign is TechnicalSign =>
+        ["pause_or_touch_lost", "asymmetry", "unexpected_slowdown", "hips_lifted", "grinder"].includes(String(sign)),
+      ) as TechnicalSign[])
+    : [];
+  const technicalEvents = doneSets.filter(
+    (set) => Array.isArray(set.techniqueSigns) && set.techniqueSigns.length > 0,
+  ).length;
+  const technicalDecision = decideTechnicalStop({
+    medicalSymptom:
+      Array.isArray(latest?.symptoms) && latest.symptoms.includes("medical_symptom"),
+    painChangesMovement:
+      Array.isArray(latest?.symptoms) && latest.symptoms.includes("pain_changes_movement"),
+    unsafeLossOfControl:
+      Array.isArray(latest?.symptoms) && latest.symptoms.includes("unsafe_loss_of_control"),
+    signs: latestSigns,
+    rpeAboveTargetByOne:
+      latest?.rpe != null &&
+      exercise.targetRpeMax != null &&
+      latest.rpe >= exercise.targetRpeMax + 1,
+    repeatedAfterReduction: technicalEvents >= 2,
+  });
+  const loggingBlocked =
+    sessionSafetyStopped ||
+    technicalDecision.action === "stop_all" ||
+    technicalDecision.action === "stop_primary" ||
+    (conditionalSingle && !singleAllowed);
+  const targetSets = parseFirstInt(exercise.targetSets);
+  const allSetsDone = targetSets != null && doneSets.length >= targetSets;
   const hasTargets = Boolean(exercise.weightText || exercise.targetReps);
-  const targetSetsNum = parseFirstInt(exercise.targetSets);
-  const allSetsDone = targetSetsNum != null && doneSets.length >= targetSetsNum;
-  const speedDay = isSpeedBench(exercise.name);
-const velocityStop = shouldStopExercise(
-  doneSets.map((s) => s.velocity),
-  { speedDay },
-);
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4">
       <section className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="border-b border-border px-4 py-4">
-          <p className="font-mono text-xs uppercase tracking-widest text-primary">
-            Упражнение {position} из {total}
-          </p>
+          <p className="font-mono text-xs uppercase tracking-widest text-primary">Упражнение {position} из {total}</p>
           <div className="mt-1 flex items-start gap-2">
-            <h2 className="min-w-0 flex-1 text-balance text-2xl font-bold leading-tight">
-              {exercise.name}
-            </h2>
+            <h2 className="min-w-0 flex-1 text-balance text-2xl font-bold leading-tight">{exercise.name}</h2>
             <ExerciseGuideButton exerciseName={exercise.name} />
           </div>
-          {(exercise.weightText ||
-            exercise.targetReps ||
-            exercise.targetSets ||
-            exercise.tempo ||
-            exercise.restSeconds ||
-            exercise.targetRirMin != null) && (
-            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
-              {exercise.weightText && (
-                <Stat label="Вес" value={exercise.weightText} />
-              )}
-              {exercise.targetReps && (
-                <Stat label="Повторения" value={exercise.targetReps} />
-              )}
-              {exercise.targetSets && (
-                <Stat label="Подходы" value={exercise.targetSets} />
-              )}
-              {exercise.tempo && <Stat label="Темп" value={exercise.tempo} />}
-              {exercise.restSeconds ? (
-                <Stat label="Отдых" value={fmtRest(exercise.restSeconds)} />
-              ) : null}
-              {exercise.targetRirMin != null && (
-                <Stat
-                  label="RIR"
-                  value={
-                    exercise.targetRirMax != null &&
-                    exercise.targetRirMax !== exercise.targetRirMin
-                      ? `${exercise.targetRirMin}–${exercise.targetRirMax}`
-                      : String(exercise.targetRirMin)
-                  }
-                />
-              )}
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+            {exercise.weightText && <Stat label="Вес" value={exercise.weightText} />}
+            {exercise.targetSets && <Stat label="Подходы" value={exercise.targetSets} />}
+            {exercise.targetReps && <Stat label="Повторения" value={exercise.targetReps} />}
+            {exercise.targetRpeMin != null && (
+              <Stat label="RPE" value={exercise.targetRpeMin === exercise.targetRpeMax ? String(exercise.targetRpeMin) : `${exercise.targetRpeMin}–${exercise.targetRpeMax ?? "?"}`} />
+            )}
+            {exercise.targetRirMin != null && (
+              <Stat label="RIR" value={exercise.targetRirMin === exercise.targetRirMax ? String(exercise.targetRirMin) : `${exercise.targetRirMin}–${exercise.targetRirMax ?? "?"}`} />
+            )}
+            {exercise.restSeconds ? <Stat label="Отдых" value={fmtRest(exercise.restSeconds)} /> : null}
+          </div>
+        </div>
+        <div className="space-y-3 px-4 py-3">
+          {exercise.isOptional && (
+            <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">Условный/опциональный элемент: при сомнении пропустить без компенсации.</p>
+          )}
+          {(exercise.condition || exercise.comment) && (
+            <p className="rounded-md bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground">{exercise.condition ?? exercise.comment}</p>
+          )}
+          {lastTimeSets.length > 0 && (
+            <div className="rounded-md border border-border px-3 py-2">
+              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><History className="size-3.5" /> Прошлое выполнение</p>
+              <p className="font-mono text-xs text-muted-foreground">
+                {lastTimeSets.map((set) => `${set.weight ?? "—"}×${set.reps ?? "—"} RIR${set.rir ?? "—"}`).join(" · ")}
+              </p>
             </div>
           )}
         </div>
-
-        <div className="px-4 py-3">
-          <MyorepsPanel
-            exerciseName={exercise.name}
-            block={block}
-            cycleNumber={cycleNumber}
-            readOnly={readOnly}
-            readinessLevel={readinessLevel}
-          />
-
-          {exercise.comment && (
-            <p className="mb-3 rounded-md bg-secondary px-3 py-2 text-sm leading-relaxed text-secondary-foreground">
-              {exercise.comment}
-            </p>
-          )}
-
-          <div className="rounded-md border border-border px-3 py-2">
-            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <History className="size-3.5 shrink-0" />
-              Прошлое выполнение
-            </p>
-            {lastTimeSets.length > 0 ? (
-              <ul className="flex flex-col gap-1">
-                {lastTimeSets.map((s, i) => (
-                  <li
-                    key={i}
-                    className="flex items-center justify-between gap-2 text-sm"
-                  >
-                    <span className="font-mono text-xs text-muted-foreground">
-                      #{i + 1}
-                    </span>
-                    <span className="font-medium">
-                      {s.weight != null ? `${s.weight} кг` : "—"} ×{" "}
-                      {s.reps ?? "—"}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      RIR {s.rir ?? "—"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Первая тренировка с этим упражнением
-              </p>
-            )}
-          </div>
-        </div>
       </section>
 
-      {rec && hasTargets && (
-        <div
-          className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs leading-relaxed ${
-            rec.direction === "up"
-              ? "bg-success/15 text-success"
-              : rec.direction === "down"
-                ? "bg-warning/15 text-warning"
-                : "bg-secondary text-secondary-foreground"
-          }`}
-        >
-          {rec.direction === "up" ? (
-            <TrendingUp className="size-4 shrink-0" />
-          ) : rec.direction === "down" ? (
-            <TrendingDown className="size-4 shrink-0" />
-          ) : (
-            <Check className="size-4 shrink-0" />
-          )}
-          <span>
-            <strong className="font-semibold">{rec.weight} кг</strong> —{" "}
-            {rec.reason}
-          </span>
+      {conditionalSingle && (
+        <SingleGate
+          sessionId={typeof sessionRef === "number" ? sessionRef : 0}
+          offline={offline || typeof sessionRef === "string"}
+          onDecision={setSingleAllowed}
+        />
+      )}
+
+      {recommendation && hasTargets && !conditionalSingle && (
+        <div className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs ${recommendation.direction === "down" ? "bg-warning/15 text-warning" : recommendation.direction === "up" ? "bg-success/15 text-success" : "bg-secondary"}`}>
+          {recommendation.direction === "down" ? <TrendingDown className="size-4" /> : recommendation.direction === "up" ? <TrendingUp className="size-4" /> : <Check className="size-4" />}
+          <span><strong>{recommendation.weight} кг</strong> — {recommendation.reason}</span>
+        </div>
+      )}
+
+      {sessionSafetyStopped && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
+          <strong>Сессия остановлена защитным правилом.</strong>
+          <p className="mt-1 text-muted-foreground">Новые подходы заблокированы. Не компенсируйте пропущенную работу.</p>
+        </div>
+      )}
+
+      {technicalDecision.action !== "continue" && (
+        <div className={`rounded-xl border p-4 text-sm ${technicalDecision.action === "reduce" ? "border-warning/40 bg-warning/10" : "border-destructive/40 bg-destructive/10"}`}>
+          <strong>{technicalDecision.action === "reduce" ? "Снизить нагрузку" : "Стоп жимовой работы"}</strong>
+          <p className="mt-1 text-muted-foreground">
+            {technicalDecision.action === "reduce"
+              ? "Снизьте вес на 2,5–5% и/или уберите один рабочий сет."
+              : "Завершите основной жим; вторичную жимовую работу не выполнять. Ничего не компенсировать."}
+          </p>
         </div>
       )}
 
       {doneSets.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-            Выполнено
-            {targetSetsNum != null
-              ? ` · ${doneSets.length} из ${targetSetsNum}`
-              : ""}
-          </p>
-          <ul className="flex flex-col gap-1.5">
-            {doneSets.map((s, i) =>
-              editingId === s.id ? (
-                <li
-                  key={s.id}
-                  className="rounded-md border border-primary/50 bg-secondary px-3 py-2"
-                >
+        <section>
+          <p className="mb-1.5 text-xs font-medium text-muted-foreground">Выполнено{targetSets != null ? ` · ${doneSets.length} из ${targetSets}` : ""}</p>
+          <ul className="space-y-2">
+            {doneSets.map((set, setIndex) => (
+              <li key={set.id} className="rounded-lg bg-secondary px-3 py-2 text-sm">
+                {editingId === set.id ? (
                   <EditSetForm
-                    set={s}
+                    set={set}
                     onCancel={() => setEditingId(null)}
-                    onSave={(weight, reps, rir) => {
+                    onSave={(values) => {
                       setEditingId(null);
-                      onUpdated(s.id, weight, reps, rir);
-                      if (offline || s.id < 0) return;
-                      updateSet({
-                        setId: s.id,
-                        sessionId:
-                          typeof sessionRef === "number" ? sessionRef : 0,
-                        weight,
-                        reps,
-                        rir,
-                      }).catch(() => {});
+                      onUpdated(set.id, values);
+                      if (set.id < 0 || offline || typeof sessionRef === "string") {
+                        replaceQueuedLocalSet(
+                          sessionRef,
+                          set.workoutExerciseId,
+                          set.setNumber,
+                          values,
+                        );
+                      } else if (typeof sessionRef === "number") {
+                        updateSet({ setId: set.id, sessionId: sessionRef, ...values }).catch(
+                          (error) => {
+                            if (isOffline(error)) {
+                              pushOp({
+                                kind: "updateSet",
+                                sessionRef,
+                                setId: set.id,
+                                ...values,
+                              });
+                            }
+                          },
+                        );
+                      }
                     }}
                   />
-                </li>
-              ) : (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between gap-2 rounded-md bg-secondary px-3 py-2 text-sm"
-                >
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-success/20 text-success">
-                    <Check className="size-3.5" />
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    #{i + 1}
-                  </span>
-                  <span className="flex-1 text-center font-medium text-muted-foreground line-through decoration-2">
-                    {s.weight != null ? `${s.weight} кг` : "—"} ×{" "}
-                    {s.reps ?? "—"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    RIR {s.rir ?? "—"}
-                  </span>
-                  {s.velocity && (
-                    <span
-                      className={`text-xs font-semibold ${s.velocity === "slow" ? "text-warning" : "text-muted-foreground"}`}
-                    >
-                      {s.velocity === "fast"
-                        ? "Быстро"
-                        : s.velocity === "slow"
-                          ? "Медленно"
-                          : "Нормально"}
-                      {s.stickingPoint
-                        ? ` · ${s.stickingPoint === "chest" ? "грудь" : s.stickingPoint === "middle" ? "середина" : "локаут"}`
-                        : ""}
-                    </span>
-                  )}
-                  {!readOnly && (
-                    <span className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        className="flex size-7 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                        aria-label={`Редактировать подход ${i + 1}`}
-                        onClick={() => setEditingId(s.id)}
-                      >
-                        <Pencil className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="flex size-7 items-center justify-center rounded text-muted-foreground hover:text-destructive"
-                        aria-label={`Удалить подход ${i + 1}`}
-                        onClick={() => {
-                          if (
-                            !confirm(
-                              `Удалить подход ${i + 1}? Это действие нельзя отменить.`,
-                            )
-                          ) {
-                            return;
-                          }
-                          onDeleted(s.id);
-                          if (offline || s.id < 0) return;
-                          deleteSet(
-                            s.id,
-                            typeof sessionRef === "number" ? sessionRef : 0,
-                          ).catch((err) => {
-                            if (isOffline(err)) {
-                              pushOp({ kind: "deleteSet", setId: s.id });
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-muted-foreground">#{setIndex + 1}</span>
+                    <span className="flex-1 font-medium">{set.weight ?? "—"} кг × {set.reps ?? "—"}</span>
+                    <span className="text-xs text-muted-foreground">RPE {set.rpe ?? "—"} · RIR {set.rir ?? "—"}</span>
+                    {!readOnly && (
+                      <>
+                        <button type="button" onClick={() => setEditingId(set.id)} className="grid size-8 place-items-center text-muted-foreground" aria-label="Редактировать"><Pencil className="size-3.5" /></button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!confirm(`Удалить подход ${setIndex + 1}?`)) return;
+                            onDeleted(set.id);
+                            if (set.id < 0 || offline || typeof sessionRef === "string") {
+                              removeQueuedLocalSet(
+                                sessionRef,
+                                set.workoutExerciseId,
+                                set.setNumber,
+                              );
+                            } else if (typeof sessionRef === "number") {
+                              deleteSet(set.id, sessionRef).catch((error) => {
+                                if (isOffline(error)) pushOp({ kind: "deleteSet", setId: set.id });
+                              });
                             }
-                          });
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </span>
-                  )}
-                </li>
-              ),
-            )}
+                          }}
+                          className="grid size-8 place-items-center text-muted-foreground hover:text-destructive"
+                          aria-label="Удалить"
+                        ><Trash2 className="size-4" /></button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
           </ul>
-        </div>
-      )}
-{velocityStop && (
-  <div className="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-xs font-medium text-red-500">
-    {speedDay ? SPEED_DAY_STOP_MESSAGE : VELOCITY_STOP_MESSAGE}
-  </div>
-)}
-      {hasTargets && !offline && (
-        <ExerciseHistory exerciseName={exercise.name} />
+        </section>
       )}
 
-      {!readOnly && doneSets.length === 0 && hasTargets && (
-        <WarmupPlates workingWeight={rec?.weight ?? prescribed} />
-      )}
+      {hasTargets && !offline && <ExerciseHistory exerciseName={exercise.name} />}
 
-      {!readOnly && (
+      {!readOnly && !loggingBlocked && (
         <SetForm
           key={doneSets.length}
-          defaultWeight={rec?.weight ?? prescribed}
+          bench={isBenchExercise(exercise)}
+          defaultWeight={recommendation?.weight ?? prescribed}
           targetRirMin={exercise.targetRirMin}
-          onSubmit={async (weight, reps, rir, velocity, stickingPoint) => {
-            const tempId = -Date.now();
+          targetRpeMax={exercise.targetRpeMax ?? null}
+          onSubmit={async (draft) => {
+            const temporaryId = -Date.now();
             const setNumber = doneSets.length + 1;
-            const row: SetRow = {
-              id: tempId,
+            const symptoms = [
+              ...(draft.medicalSymptom ? ["medical_symptom"] : []),
+              ...(draft.painChangesMovement ? ["pain_changes_movement"] : []),
+              ...(draft.unsafeLossOfControl ? ["unsafe_loss_of_control"] : []),
+            ];
+            const row: SessionSetRow = {
+              id: temporaryId,
               workoutExerciseId: exercise.id,
               setNumber,
-              weight,
-              reps,
-              rir,
-              velocity,
-              stickingPoint,
+              ...draft,
+              symptoms,
             };
             onLogged(row);
-
-            // запускаем таймер отдыха для этого упражнения
             if (exercise.restSeconds && exercise.restSeconds > 0) {
-              const nextRec = recommendWeight(
-                [
-                  ...doneSets.map((s) => ({
-                    weight: s.weight,
-                    reps: s.reps,
-                    rir: s.rir,
-                  })),
-                  { weight, reps, rir },
-                ],
+              const nextRecommendation = recommendWeight(
+                [...doneSets.map((set) => ({ weight: set.weight, reps: set.reps, rir: set.rir })), draft],
                 exercise.targetRirMin,
                 exercise.targetRirMax,
                 prescribed,
                 { fixedLoad },
               );
-              onRest(exercise.restSeconds, `Отдых · ${exercise.name}`, nextRec);
+              onRest(exercise.restSeconds, `Отдых · ${exercise.name}`, nextRecommendation);
             }
-
-            // офлайн-сессия: только очередь, без сервера
+            const payload = {
+              sessionRef,
+              workoutExerciseId: exercise.id,
+              setNumber,
+              weight: draft.weight,
+              reps: draft.reps,
+              rir: draft.rir,
+              rpe: draft.rpe,
+              velocity: draft.velocity,
+              stickingPoint: draft.stickingPoint,
+              isWarmup: draft.isWarmup,
+              pauseQuality: draft.pauseQuality,
+              touchPoint: draft.touchPoint,
+              trajectoryQuality: draft.trajectoryQuality,
+              techniqueSigns: draft.techniqueSigns,
+              painScore: draft.painScore,
+              symptoms,
+              videoUrl: draft.videoUrl,
+            } as const;
             if (offline || typeof sessionRef === "string") {
-              pushOp({
-                kind: "set",
-                sessionRef,
-                workoutExerciseId: exercise.id,
-                setNumber,
-                weight,
-                reps,
-                rir,
-                velocity,
-                stickingPoint,
-              });
+              pushOp({ kind: "set", ...payload });
               return;
             }
-
             try {
-              const inserted = await logSet({
-                sessionId: sessionRef,
-                workoutExerciseId: exercise.id,
-                setNumber,
-                weight,
-                reps,
-                rir,
-                velocity,
-                stickingPoint,
-              });
-              if (inserted?.id != null) onReplaceId(tempId, inserted.id);
-            } catch (err) {
-              if (isOffline(err)) {
-                pushOp({
-                  kind: "set",
-                  sessionRef,
-                  workoutExerciseId: exercise.id,
-                  setNumber,
-                  weight,
-                  reps,
-                  rir,
-                  velocity,
-                  stickingPoint,
-                });
-              } else {
-                throw err;
-              }
+              const inserted = await logSet({ sessionId: sessionRef, ...payload });
+              onReplaceId(temporaryId, inserted.id);
+            } catch (error) {
+              if (isOffline(error)) pushOp({ kind: "set", ...payload });
+              else throw error;
             }
           }}
         />
       )}
 
+      {!readOnly && loggingBlocked && conditionalSingle && !singleAllowed && onAdvance && (
+        <Button variant="outline" className="h-11 w-full bg-transparent" onClick={onAdvance}>
+          Пропустить без компенсации <ArrowRight className="size-4" />
+        </Button>
+      )}
       {!readOnly && onAdvance && doneSets.length > 0 && (
-        <Button
-          variant={allSetsDone ? "default" : "outline"}
-          className={allSetsDone ? "h-11 w-full" : "h-11 w-full bg-transparent"}
-          onClick={onAdvance}
-        >
-          Закончить упражнение · следующее
-          <ArrowRight className="size-4" />
+        <Button variant={allSetsDone ? "default" : "outline"} className="h-11 w-full" onClick={onAdvance}>
+          Закончить упражнение · следующее <ArrowRight className="size-4" />
         </Button>
       )}
     </div>
   );
 }
 
-/** Ошибка вызвана отсутствием сети (а не логикой сервера)? */
-function isOffline(err: unknown): boolean {
-  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
-  return err instanceof TypeError;
-}
-
 function SetForm({
+  bench,
   defaultWeight,
   targetRirMin,
+  targetRpeMax,
   onSubmit,
 }: {
+  bench: boolean;
   defaultWeight: number | null;
   targetRirMin: number | null;
-  onSubmit: (
-    weight: number | null,
-    reps: number | null,
-    rir: number | null,
-    velocity: "fast" | "normal" | "slow",
-    stickingPoint: "chest" | "middle" | "lockout" | null,
-  ) => Promise<void>;
+  targetRpeMax: number | null;
+  onSubmit: (draft: SetDraft) => Promise<void>;
 }) {
-  const [weight, setWeight] = useState<string>(
-    defaultWeight != null ? String(defaultWeight) : "",
-  );
-  const [reps, setReps] = useState<string>("");
+  const [weight, setWeight] = useState(defaultWeight != null ? String(defaultWeight) : "");
+  const [reps, setReps] = useState("");
   const [rir, setRir] = useState<number | null>(targetRirMin);
-  const [velocity, setVelocity] = useState<"fast" | "normal" | "slow">(
-    "normal",
-  );
-  const [stickingPoint, setStickingPoint] = useState<
-    "chest" | "middle" | "lockout" | null
-  >(null);
+  const [rpe, setRpe] = useState<number | null>(targetRpeMax);
+  const [velocity, setVelocity] = useState<"fast" | "normal" | "slow">("normal");
+  const [stickingPoint, setStickingPoint] = useState<"chest" | "middle" | "lockout" | null>(null);
+  const [isWarmup, setIsWarmup] = useState(false);
+  const [pauseQuality, setPauseQuality] = useState<SetDraft["pauseQuality"]>(bench ? "clean" : null);
+  const [touchPoint, setTouchPoint] = useState<SetDraft["touchPoint"]>(bench ? "stable" : null);
+  const [trajectoryQuality, setTrajectoryQuality] = useState<SetDraft["trajectoryQuality"]>(bench ? "clean" : null);
+  const [techniqueSigns, setTechniqueSigns] = useState<TechnicalSign[]>([]);
+  const [painScore, setPainScore] = useState<number | null>(0);
+  const [painChangesMovement, setPainChangesMovement] = useState(false);
+  const [medicalSymptom, setMedicalSymptom] = useState(false);
+  const [unsafeLossOfControl, setUnsafeLossOfControl] = useState(false);
+  const [videoUrl, setVideoUrl] = useState("");
   const [saving, setSaving] = useState(false);
 
   const bump = (delta: number) => {
-    const cur = Number.parseFloat(weight.replace(",", ".")) || 0;
-    const next = Math.max(0, Math.round((cur + delta) * 10) / 10);
-    setWeight(String(next));
+    const current = Number.parseFloat(weight.replace(",", ".")) || 0;
+    setWeight(String(Math.max(0, Math.round((current + delta) * 10) / 10)));
   };
+  const toggleSign = (sign: TechnicalSign) =>
+    setTechniqueSigns((current) =>
+      current.includes(sign) ? current.filter((item) => item !== sign) : [...current, sign],
+    );
 
   return (
     <form
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
-      onSubmit={async (e) => {
-        e.preventDefault();
+      className="space-y-4 rounded-xl border border-border bg-card p-4"
+      onSubmit={async (event) => {
+        event.preventDefault();
         unlockAudio();
         setSaving(true);
-        const w = weight.trim()
-          ? Number.parseFloat(weight.replace(",", "."))
-          : null;
-        const r = reps.trim() ? Number.parseInt(reps, 10) : null;
-        await onSubmit(
-          Number.isNaN(w as number) ? null : w,
-          Number.isNaN(r as number) ? null : r,
-          rir,
-          velocity,
-          stickingPoint,
-        );
-        setSaving(false);
+        try {
+          const parsedWeight = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null;
+          const parsedReps = reps.trim() ? Number.parseInt(reps, 10) : null;
+          await onSubmit({
+            weight: Number.isNaN(parsedWeight as number) ? null : parsedWeight,
+            reps: Number.isNaN(parsedReps as number) ? null : parsedReps,
+            rir,
+            rpe,
+            velocity,
+            stickingPoint,
+            isWarmup,
+            pauseQuality,
+            touchPoint,
+            trajectoryQuality,
+            techniqueSigns,
+            painScore,
+            painChangesMovement,
+            medicalSymptom,
+            unsafeLossOfControl,
+            videoUrl: videoUrl.trim() || null,
+          });
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor={`w-${targetRirMin}-weight`}
-            className="text-xs text-muted-foreground"
-          >
-            Вес, кг
-          </label>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => bump(-2.5)}
-              className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-secondary"
-              aria-label="Минус 2.5 кг"
-            >
-              <Minus className="size-4" />
-            </button>
-            <input
-              id={`w-${targetRirMin}-weight`}
-              inputMode="decimal"
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-              className="h-10 w-full min-w-0 rounded-md border border-input bg-transparent px-2 text-center text-base font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="0"
-            />
-            <button
-              type="button"
-              onClick={() => bump(2.5)}
-              className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-secondary"
-              aria-label="Плюс 2.5 кг"
-            >
-              <Plus className="size-4" />
-            </button>
+        <label className="text-xs text-muted-foreground">Вес, кг
+          <div className="mt-1 flex gap-1.5">
+            <button type="button" onClick={() => bump(-2.5)} className="grid size-10 shrink-0 place-items-center rounded-md border border-border"><Minus className="size-4" /></button>
+            <input inputMode="decimal" value={weight} onChange={(event) => setWeight(event.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-center text-base font-semibold" />
+            <button type="button" onClick={() => bump(2.5)} className="grid size-10 shrink-0 place-items-center rounded-md border border-border"><Plus className="size-4" /></button>
           </div>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor={`w-${targetRirMin}-reps`}
-            className="text-xs text-muted-foreground"
-          >
-            Повторения
-          </label>
-          <input
-            id={`w-${targetRirMin}-reps`}
-            inputMode="numeric"
-            value={reps}
-            onChange={(e) => setReps(e.target.value)}
-            className="h-10 w-full rounded-md border border-input bg-transparent px-2 text-center text-base font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder="0"
-          />
-        </div>
+        </label>
+        <label className="text-xs text-muted-foreground">Повторения
+          <input inputMode="numeric" value={reps} onChange={(event) => setReps(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-2 text-center text-base font-semibold" />
+        </label>
       </div>
 
-      <div className="flex flex-col gap-1">
-        <span className="text-xs text-muted-foreground">
-          Сколько осталось до отказа (RIR)?
-        </span>
-        <div className="flex gap-1.5" role="radiogroup" aria-label="RIR">
-          {[0, 1, 2, 3, 4, 5].map((v) => (
-            <button
-              key={v}
-              type="button"
-              role="radio"
-              aria-checked={rir === v}
-              onClick={() => setRir(rir === v ? null : v)}
-              className={`h-10 flex-1 rounded-md border text-sm font-semibold transition-colors ${
-                rir === v
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border text-muted-foreground hover:bg-secondary"
-              }`}
-            >
-              {v}
-            </button>
-          ))}
+      <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 10]} selected={rpe} set={setRpe} />
+      <ScaleButtons label="Фактический RIR" values={[0, 1, 2, 3, 4, 5]} selected={rir} set={setRir} />
+
+      {bench && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <SelectField label="Пауза" value={pauseQuality ?? ""} set={(value) => setPauseQuality((value || null) as SetDraft["pauseQuality"])} options={[["clean", "Чистая"], ["short", "Короткая"], ["lost", "Потеряна"]]} />
+          <SelectField label="Точка касания" value={touchPoint ?? ""} set={(value) => setTouchPoint((value || null) as SetDraft["touchPoint"])} options={[["stable", "Стабильна"], ["high", "Выше"], ["low", "Ниже"], ["variable", "Плавает"]]} />
+          <SelectField label="Траектория" value={trajectoryQuality ?? ""} set={(value) => setTrajectoryQuality((value || null) as SetDraft["trajectoryQuality"])} options={[["clean", "Чистая"], ["asymmetric", "Асимметрия"], ["deviated", "Отклонение"]]} />
         </div>
-      </div>
+      )}
 
       <fieldset>
-        <legend className="text-xs text-muted-foreground">
-          Скорость подхода
-        </legend>
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          {(
-            [
-              ["fast", "Быстро"],
-              ["normal", "Нормально"],
-              ["slow", "Медленно"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setVelocity(value)}
-              className={`h-10 rounded-md border text-sm font-semibold ${velocity === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {velocity === "slow" && (
-          <p className="mt-2 rounded-md bg-warning/15 p-2 text-xs text-warning">
-            Velocity stop: не добавляйте нагрузку; при повторном замедлении
-            завершите упражнение.
-          </p>
-        )}
-      </fieldset>
-
-      <fieldset>
-        <legend className="text-xs text-muted-foreground">
-          Зона стопора (если был на тяжёлом подходе)
-        </legend>
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          {(
-            [
-              ["chest", "Грудь"],
-              ["middle", "Середина"],
-              ["lockout", "Локаут"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() =>
-                setStickingPoint(stickingPoint === value ? null : value)
-              }
-              className={`h-10 rounded-md border text-xs font-semibold ${stickingPoint === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
-            >
-              {label}
-            </button>
+        <legend className="text-xs font-medium text-muted-foreground">Технические признаки</legend>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {([
+            ["pause_or_touch_lost", "Потеря паузы/касания"],
+            ["asymmetry", "Асимметрия"],
+            ["unexpected_slowdown", "Неожиданное замедление"],
+            ["hips_lifted", "Отрыв таза"],
+            ["grinder", "Выраженный гриндер"],
+          ] as const).map(([value, label]) => (
+            <button key={value} type="button" onClick={() => toggleSign(value)} className={`min-h-10 rounded-lg border px-2 text-xs ${techniqueSigns.includes(value) ? "border-warning bg-warning/15" : "border-border"}`}>{label}</button>
           ))}
         </div>
       </fieldset>
 
-      <Button type="submit" disabled={saving} className="h-11 w-full">
-        {saving ? "Сохраняю..." : "Закончить подход"}
-      </Button>
+      <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10
+        <input type="range" min="0" max="10" value={painScore ?? 0} onChange={(event) => setPainScore(Number(event.target.value))} className="mt-2 w-full" />
+      </label>
+      <div className="space-y-1 rounded-lg border border-destructive/30 p-3">
+        <CheckRow label="Боль меняет движение" checked={painChangesMovement} set={setPainChangesMovement} />
+        <CheckRow label="Появился медицинский симптом" checked={medicalSymptom} set={setMedicalSymptom} />
+        <CheckRow label="Опасная потеря контроля" checked={unsafeLossOfControl} set={setUnsafeLossOfControl} />
+      </div>
+      <label className="block text-xs text-muted-foreground">Видео/ссылка (опционально)
+        <input value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://…" className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
+      </label>
+      <CheckRow label="Это разминочный подход — исключить из тоннажа" checked={isWarmup} set={setIsWarmup} />
+
+      <fieldset>
+        <legend className="text-xs text-muted-foreground">Скорость</legend>
+        <div className="mt-1 grid grid-cols-3 gap-2">
+          {(["fast", "normal", "slow"] as const).map((value) => (
+            <button key={value} type="button" onClick={() => setVelocity(value)} className={`h-10 rounded-md border text-xs font-semibold ${velocity === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value === "fast" ? "Быстро" : value === "slow" ? "Медленно" : "Нормально"}</button>
+          ))}
+        </div>
+      </fieldset>
+      <Button type="submit" disabled={saving} className="h-11 w-full">{saving ? "Сохраняю…" : "Записать подход"}</Button>
     </form>
   );
 }
 
-/** Инлайн-редактирование записанного подхода */
-function EditSetForm({
-  set,
-  onSave,
-  onCancel,
-}: {
-  set: SetRow;
-  onSave: (
-    weight: number | null,
-    reps: number | null,
-    rir: number | null,
-  ) => void;
-  onCancel: () => void;
-}) {
-  const [weight, setWeight] = useState(
-    set.weight != null ? String(set.weight) : "",
-  );
+function EditSetForm({ set, onSave, onCancel }: { set: SessionSetRow; onSave: (values: { weight: number | null; reps: number | null; rir: number | null; rpe: number | null }) => void; onCancel: () => void }) {
+  const [weight, setWeight] = useState(set.weight != null ? String(set.weight) : "");
   const [reps, setReps] = useState(set.reps != null ? String(set.reps) : "");
   const [rir, setRir] = useState<number | null>(set.rir);
-
+  const [rpe, setRpe] = useState<number | null>(set.rpe ?? null);
   return (
-    <form
-      className="flex flex-col gap-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const w = weight.trim()
-          ? Number.parseFloat(weight.replace(",", "."))
-          : null;
-        const r = reps.trim() ? Number.parseInt(reps, 10) : null;
-        onSave(
-          Number.isNaN(w as number) ? null : w,
-          Number.isNaN(r as number) ? null : r,
-          rir,
-        );
-      }}
-    >
+    <form className="space-y-2" onSubmit={(event) => {
+      event.preventDefault();
+      const parsedWeight = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null;
+      const parsedReps = reps.trim() ? Number.parseInt(reps, 10) : null;
+      onSave({ weight: Number.isNaN(parsedWeight as number) ? null : parsedWeight, reps: Number.isNaN(parsedReps as number) ? null : parsedReps, rir, rpe });
+    }}>
       <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor={`edit-w-${set.id}`}
-            className="text-xs text-muted-foreground"
-          >
-            Вес, кг
-          </label>
-          <input
-            id={`edit-w-${set.id}`}
-            inputMode="decimal"
-            value={weight}
-            onChange={(e) => setWeight(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-center text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor={`edit-r-${set.id}`}
-            className="text-xs text-muted-foreground"
-          >
-            Повторения
-          </label>
-          <input
-            id={`edit-r-${set.id}`}
-            inputMode="numeric"
-            value={reps}
-            onChange={(e) => setReps(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-center text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
+        <input aria-label="Вес" value={weight} onChange={(event) => setWeight(event.target.value)} className="h-9 rounded-md border border-input bg-background px-2" />
+        <input aria-label="Повторения" value={reps} onChange={(event) => setReps(event.target.value)} className="h-9 rounded-md border border-input bg-background px-2" />
       </div>
-      <div className="flex gap-1" role="radiogroup" aria-label="RIR">
-        {[0, 1, 2, 3, 4, 5].map((v) => (
-          <button
-            key={v}
-            type="button"
-            role="radio"
-            aria-checked={rir === v}
-            onClick={() => setRir(rir === v ? null : v)}
-            className={`h-8 flex-1 rounded-md border text-xs font-semibold transition-colors ${
-              rir === v
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border text-muted-foreground hover:bg-secondary"
-            }`}
-          >
-            {v}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="flex-1 bg-transparent"
-          onClick={onCancel}
-        >
-          Отмена
-        </Button>
-        <Button type="submit" size="sm" className="flex-[2]">
-          Сохранить
-        </Button>
-      </div>
+      <ScaleButtons label="RPE" values={[6, 7, 8, 9, 10]} selected={rpe} set={setRpe} />
+      <ScaleButtons label="RIR" values={[0, 1, 2, 3, 4, 5]} selected={rir} set={setRir} />
+      <div className="flex gap-2"><Button type="button" variant="outline" className="flex-1" onClick={onCancel}>Отмена</Button><Button type="submit" className="flex-1">Сохранить</Button></div>
     </form>
   );
+}
+
+function ScaleButtons({ label, values, selected, set }: { label: string; values: readonly number[]; selected: number | null; set: (value: number | null) => void }) {
+  return (
+    <fieldset><legend className="text-xs text-muted-foreground">{label}</legend><div className="mt-1 flex flex-wrap gap-1.5">{values.map((value) => <button key={value} type="button" onClick={() => set(selected === value ? null : value)} className={`min-h-9 min-w-10 flex-1 rounded-md border px-2 text-xs font-semibold ${selected === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value}</button>)}</div></fieldset>
+  );
+}
+
+function SelectField({ label, value, set, options }: { label: string; value: string; set: (value: string) => void; options: readonly (readonly [string, string])[] }) {
+  return <label className="text-xs text-muted-foreground">{label}<select value={value} onChange={(event) => set(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-input bg-background px-2 text-sm"><option value="">—</option>{options.map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label>;
+}
+
+function CheckRow({ label, checked, set }: { label: string; checked: boolean; set: (checked: boolean) => void }) {
+  return <label className="flex min-h-10 items-start gap-3 py-1.5 text-sm"><input type="checkbox" checked={checked} onChange={(event) => set(event.target.checked)} className="mt-0.5 size-4 accent-current" /><span>{label}</span></label>;
+}
+
+function readinessName(level: string) {
+  return level === "green" ? "зелёная" : level === "yellow" ? "жёлтая" : level === "orange" ? "оранжевая" : "красная";
+}
+
+function readinessAction(level: string) {
+  if (level === "yellow") return "Без синглов/тестов; −2,5–5% или −1 сет.";
+  if (level === "orange") return "Только техника 50–65% RMref, 2–3×3; подсобка сокращена.";
+  if (level === "red") return "Тренировка и разминка запрещены.";
+  return "План допустим; специальные элементы требуют собственных шлюзов.";
+}
+
+function isOffline(error: unknown): boolean {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
+  return error instanceof TypeError;
 }

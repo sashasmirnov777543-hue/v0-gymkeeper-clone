@@ -1,14 +1,31 @@
 @echo off
+setlocal
 cd /d "%~dp0"
-if not exist "migrations\006_final_program_h2_v9.sql" (
-  echo [ERROR] File migrations\006_final_program_h2_v9.sql not found!
-  echo Copy the SQL file into the migrations folder first.
+
+if "%DATABASE_URL%"=="" (
+  echo [ERROR] DATABASE_URL is not set.
+  echo Set it in your private environment before running this script.
+  echo Never paste database credentials into this repository.
   pause
   exit /b 1
 )
-set "DATABASE_URL=postgresql://neondb_owner:npg_JI6iwCqpB9jW@ep-morning-pond-apahew2z-pooler.c-7.us-east-1.aws.neon.tech/neondb?channel_binding=require&sslmode=require"
-echo Running migrations...
+
+if not exist "scripts\migrate.mjs" (
+  echo [ERROR] scripts\migrate.mjs not found.
+  pause
+  exit /b 1
+)
+
+echo Running all pending versioned migrations...
 node scripts\migrate.mjs
+if errorlevel 1 (
+  echo.
+  echo Migration failed. No further action was taken.
+  pause
+  exit /b 1
+)
+
 echo.
-echo Done. Check output above for errors.
+echo Migrations completed successfully.
 pause
+endlocal

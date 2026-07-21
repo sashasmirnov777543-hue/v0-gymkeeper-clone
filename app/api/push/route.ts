@@ -14,39 +14,10 @@ const VAPID_SUBJECT = "mailto:gymkeeper@viktor.com";
 const BURST_COUNT = 3;
 const BURST_GAP_MS = 1600;
 
-let initPromise: Promise<void> | null = null;
-function ensureTables(): Promise<void> {
-  initPromise ??= (async () => {
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS push_meta (key text PRIMARY KEY, value text NOT NULL)`,
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS push_schedules (
-        endpoint text PRIMARY KEY,
-        subscription text NOT NULL,
-        end_at bigint NOT NULL,
-        title text NOT NULL DEFAULT '',
-        body text NOT NULL,
-        client_ts bigint NOT NULL
-      )`,
-    );
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS push_log (
-        id serial PRIMARY KEY,
-        at timestamptz NOT NULL DEFAULT now(),
-        event text NOT NULL,
-        detail text NOT NULL DEFAULT ''
-      )`,
-    );
-  })();
-  return initPromise;
-}
-
 async function getVapidKeys(): Promise<{
   publicKey: string;
   privateKey: string;
 }> {
-  await ensureTables();
   const read = async () => {
     const r = await pool.query(
       `SELECT key, value FROM push_meta WHERE key IN ('vapid_public','vapid_private')`,
@@ -158,7 +129,6 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad json" }, { status: 400 });
   }
-  await ensureTables();
 
   if (data.action === "cancel") {
     if (!data.endpoint || typeof data.clientTs !== "number") {

@@ -153,7 +153,7 @@ function prefetchPages(data: { cycles?: { workouts?: { id: number }[] }[] }) {
   }
   // если кэш уже был — не качаем повторно
   const had = loadProgram() != null
-  const urls: string[] = ["/", "/history", "/stats", "/technique"]
+  const urls: string[] = ["/", "/history", "/stats", "/technique", "/settings"]
   for (const c of data.cycles ?? []) {
     for (const w of c.workouts ?? []) {
       urls.push(`/workout/${w.id}`)
