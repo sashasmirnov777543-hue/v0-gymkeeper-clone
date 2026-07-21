@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { SessionLogger } from "@/components/session-logger";
 import { CardioSession } from "@/components/cardio-session";
+import { assessReadiness } from "@/lib/readiness";
 import {
   getLocalSession,
   loadLocalSets,
@@ -31,6 +32,8 @@ function OfflineSession() {
         program: ProgramCache;
         workoutId: number;
         startedAt: string;
+        readinessLevel: string | null;
+        adaptationPlan: unknown;
       }
   >({ status: "loading" });
 
@@ -57,11 +60,14 @@ function OfflineSession() {
       });
       return;
     }
+    const readiness = local.readiness ? assessReadiness(local.readiness) : null;
     setState({
       status: "ready",
       program,
       workoutId: local.workoutId,
       startedAt: local.startedAt,
+      readinessLevel: readiness?.level ?? null,
+      adaptationPlan: readiness?.permittedAction ?? null,
     });
   }, [localKey]);
 
@@ -69,7 +75,7 @@ function OfflineSession() {
   if (state.status === "error")
     return <CenteredMessage text={state.message} showHome />;
 
-  const { program, workoutId, startedAt } = state;
+  const { program, workoutId, startedAt, readinessLevel, adaptationPlan } = state;
   let workout: ProgramCache["cycles"][number]["workouts"][number] | null = null;
   let cycle: ProgramCache["cycles"][number] | null = null;
   for (const c of program.cycles) {
@@ -88,12 +94,18 @@ function OfflineSession() {
   }
 
   if (workout.kind === "cardio") {
-    const cardioSession = { id: localKey, status: "active", startedAt };
+    const cardioSession = {
+      id: localKey,
+      status: "active",
+      startedAt,
+      readinessLevel,
+    };
     const cardioWorkout = {
       id: workout.id,
       title: workout.title,
       cardioZone: workout.cardioZone,
       cardioMinutes: workout.cardioMinutes,
+      prescription: workout.prescription,
     };
     const cardioCycle = { number: cycle.number, name: cycle.name };
     return (
@@ -105,16 +117,39 @@ function OfflineSession() {
     );
   }
 
+  let offlineExercises = workout.exercises;
+  if (readinessLevel === "red") offlineExercises = [];
+  else if (readinessLevel === "orange") {
+    const primary = offlineExercises.find((exercise) =>
+      /primary|соревновательный.*жим|жим лёжа с паузой|паузный жим/i.test(
+        `${exercise.role ?? ""} ${exercise.name}`,
+      ),
+    );
+    offlineExercises = primary ? [primary] : [];
+  } else if (readinessLevel === "yellow") {
+    offlineExercises = offlineExercises.filter(
+      (exercise) =>
+        !exercise.isOptional &&
+        !/single|test|calibration/.test(exercise.role ?? ""),
+    );
+  }
+
   return (
     <SessionLogger
-      session={{ id: 0, status: "active", startedAt }}
+      session={{
+        id: 0,
+        status: "active",
+        startedAt,
+        readinessLevel,
+        adaptationPlan,
+      }}
       workout={{ id: workout.id, title: workout.title }}
       cycle={{
         number: cycle.number,
         name: cycle.name,
         block: cycle.block ?? "v9",
       }}
-      exercises={workout.exercises}
+      exercises={offlineExercises}
       initialSets={loadLocalSets(localKey)}
       lastSetsByName={program.lastSetsByName}
       offlineKey={localKey}

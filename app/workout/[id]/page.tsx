@@ -3,7 +3,14 @@ import { notFound } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ensureSchema } from "@/lib/db/migrate";
-import { cycles, sessions, workoutExercises, workouts } from "@/lib/db/schema";
+import {
+  cycles,
+  programState,
+  sessions,
+  workoutExercises,
+  workouts,
+} from "@/lib/db/schema";
+import { weightFromRmrefPercent } from "@/lib/program/rmref";
 import { getLastSetsByExerciseNames } from "@/app/actions/workout";
 import { BottomNav } from "@/components/bottom-nav";
 import { StartWorkoutButton } from "@/components/start-workout-button";
@@ -51,7 +58,7 @@ export default async function WorkoutPage({
     .limit(1);
   if (!workout) notFound();
 
-  const [[cycle], exercises, active] = await Promise.all([
+  const [[cycle], exercises, active, stateRows] = await Promise.all([
     db.select().from(cycles).where(eq(cycles.id, workout.cycleId)).limit(1),
     db
       .select()
@@ -63,6 +70,11 @@ export default async function WorkoutPage({
       .from(sessions)
       .where(eq(sessions.status, "active"))
       .limit(1),
+    db
+      .select()
+      .from(programState)
+      .where(eq(programState.profileKey, "primary"))
+      .limit(1),
   ]);
 
   const lastByName =
@@ -72,9 +84,27 @@ export default async function WorkoutPage({
   const first = exercises[0];
   const firstLast = first ? (lastByName[first.name] ?? []) : [];
   const restExercises = exercises.slice(1);
+  const testBranches = Array.isArray(workout.branches)
+    ? (workout.branches as Array<{ id?: string; name?: string; default?: boolean }>)
+        .filter(
+          (branch): branch is { id: string; name: string; default?: boolean } =>
+            typeof branch.id === "string" && typeof branch.name === "string",
+        )
+    : [];
+  const rmrefKg = Number(stateRows[0]?.rmrefKg ?? 115);
+  const displayWeight = (exercise: (typeof exercises)[number]) => {
+    const min = exercise.pctMin != null ? Number(exercise.pctMin) : null;
+    const max = exercise.pctMax != null ? Number(exercise.pctMax) : null;
+    if (min == null && max == null) return exercise.weightText;
+    const minKg = min == null ? null : weightFromRmrefPercent(rmrefKg, min);
+    const maxKg = max == null ? null : weightFromRmrefPercent(rmrefKg, max);
+    const pct = min === max ? `${min}%` : `${min ?? "?"}–${max ?? "?"}%`;
+    const kg = minKg === maxKg ? `${minKg}` : `${minKg ?? "?"}–${maxKg ?? "?"}`;
+    return `${pct} RMref · ${kg} кг`;
+  };
 
   return (
-    <div className="min-h-screen bg-background pb-32">
+    <div className="min-h-screen bg-background pb-56">
       <header className="border-b border-border bg-card">
         <div className="mx-auto max-w-lg px-4 py-4">
           <Link
@@ -158,10 +188,11 @@ export default async function WorkoutPage({
                     first.targetSets ||
                     first.tempo ||
                     first.restSeconds ||
-                    first.targetRirMin != null) && (
+                    first.targetRirMin != null ||
+                    first.targetRpeMin != null) && (
                     <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
                       {first.weightText && (
-                        <Stat label="Вес" value={first.weightText} />
+                        <Stat label="Вес" value={displayWeight(first) ?? first.weightText} />
                       )}
                       {first.targetReps && (
                         <Stat label="Повторения" value={first.targetReps} />
@@ -183,6 +214,16 @@ export default async function WorkoutPage({
                             first.targetRirMin === first.targetRirMax
                               ? String(first.targetRirMin)
                               : `${first.targetRirMin}–${first.targetRirMax}`
+                          }
+                        />
+                      )}
+                      {first.targetRpeMin != null && (
+                        <Stat
+                          label="RPE"
+                          value={
+                            first.targetRpeMin === first.targetRpeMax
+                              ? String(first.targetRpeMin)
+                              : `${first.targetRpeMin}–${first.targetRpeMax}`
                           }
                         />
                       )}
@@ -274,7 +315,7 @@ export default async function WorkoutPage({
 
                             {ex.weightText && (
                               <p className="mt-1 font-mono text-sm font-semibold leading-relaxed text-primary">
-                                {ex.weightText}
+                                {displayWeight(ex) ?? ex.weightText}
                               </p>
                             )}
 
@@ -310,13 +351,14 @@ export default async function WorkoutPage({
         )}
       </main>
 
-      <div className="fixed inset-x-0 bottom-16 z-40">
+      <div className="fixed inset-x-0 bottom-32 z-40">
         <div className="mx-auto max-w-lg px-4 pb-2">
           <StartWorkoutButton
             workoutId={workoutId}
             workoutKind={workout.kind}
             hasActive={active.length > 0}
             activeSessionId={active[0]?.id}
+            testBranches={testBranches}
           />
         </div>
       </div>

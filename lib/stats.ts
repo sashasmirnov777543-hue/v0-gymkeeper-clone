@@ -1,7 +1,7 @@
 /** e1RM имеет смысл только для вариантов жима и подходов 1–10 повторов. */
 export function isE1rmExercise(name: string): boolean {
   const v = name.toLocaleLowerCase("ru-RU");
-  return /жим.*л[её]жа|спото|spoto|pin.?press|жим.*пин|жим.*узк|узк.*жим|close.?grip/.test(
+  return /жим.*л[её]жа|соревновательн.*жим|паузн.*жим|спото|spoto|жим.*узк|узк.*жим|close.?grip/.test(
     v,
   );
 }
