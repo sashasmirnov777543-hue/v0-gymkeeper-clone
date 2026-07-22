@@ -770,7 +770,9 @@ function SetForm({
         </label>
       </div>
 
-      <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 10]} selected={rpe} set={setRpe} />
+      {(bench || targetRpeMax != null) && (
+  <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 10]} selected={rpe} set={setRpe} />
+)}
       <ScaleButtons label="Фактический RIR" values={[0, 1, 2, 3, 4, 5]} selected={rir} set={setRir} />
 
       {bench && (
@@ -780,7 +782,7 @@ function SetForm({
           <SelectField label="Траектория" value={trajectoryQuality ?? ""} set={(value) => setTrajectoryQuality((value || null) as SetDraft["trajectoryQuality"])} options={[["clean", "Чистая"], ["asymmetric", "Асимметрия"], ["deviated", "Отклонение"]]} />
         </div>
       )}
-
+     {bench && (
       <fieldset>
         <legend className="text-xs font-medium text-muted-foreground">Технические признаки</legend>
         <div className="mt-2 grid grid-cols-2 gap-2">
@@ -795,8 +797,8 @@ function SetForm({
           ))}
         </div>
       </fieldset>
-
-      <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10
+      )}
+      <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10      
         <input type="range" min="0" max="10" value={painScore ?? 0} onChange={(event) => setPainScore(Number(event.target.value))} className="mt-2 w-full" />
       </label>
       <div className="space-y-1 rounded-lg border border-destructive/30 p-3">
@@ -808,7 +810,7 @@ function SetForm({
         <input value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://…" className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
       </label>
       <CheckRow label="Это разминочный подход — исключить из тоннажа" checked={isWarmup} set={setIsWarmup} />
-
+     {bench && (
       <fieldset>
         <legend className="text-xs text-muted-foreground">Скорость</legend>
         <div className="mt-1 grid grid-cols-3 gap-2">
@@ -817,6 +819,7 @@ function SetForm({
           ))}
         </div>
       </fieldset>
+        )}
       <Button type="submit" disabled={saving} className="h-11 w-full">{saving ? "Сохраняю…" : "Записать подход"}</Button>
     </form>
   );
