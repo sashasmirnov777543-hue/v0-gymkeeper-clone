@@ -47,7 +47,28 @@ function parseJsonObject(text: string): unknown {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/, "")
     .trim();
-  return JSON.parse(withoutFence);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(withoutFence);
+  } catch {
+    const start = withoutFence.indexOf("{");
+    const end = withoutFence.lastIndexOf("}");
+    if (start === -1 || end <= start) {
+      console.error("GEMINI RAW:", withoutFence.slice(0, 2000));
+      throw new Error("Gemini вернул не-JSON ответ");
+    }
+    parsed = JSON.parse(withoutFence.slice(start, end + 1));
+  }
+  if (typeof parsed === "string") {
+    parsed = JSON.parse(parsed);
+  }
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    parsed = parsed[0];
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    console.error("GEMINI RAW:", withoutFence.slice(0, 2000));
+  }
+  return parsed;
 }
 
 function validateStructuredResponse(value: unknown): CoachStructuredResponse {
