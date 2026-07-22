@@ -1,11 +1,12 @@
 // Клиентский офлайн-слой: кэш программы, очередь операций (outbox), локальные сессии
 "use client";
 
-import type { LoggedSetLite } from "@/lib/recommend";
-import type { ReadinessInput } from "@/lib/training-logic";
-import { dedupeOperationsById } from "@/lib/offline-dedup";
+import type { LoggedSetLite } from "./recommend.ts";
+import type { ReadinessInput } from "./readiness.ts";
+import { dedupeOperationsById } from "./offline-dedup.ts";
 
-const PROGRAM_KEY = "gym:program";
+const PROGRAM_KEY = "gym:program:h2-v9-1.0";
+const ACTIVE_PROGRAM_VERSION = "h2-v9-1.0";
 const OUTBOX_KEY = "gym:outbox";
 const LOCAL_SESSIONS_KEY = "gym:local-sessions";
 const LOCAL_SETS_PREFIX = "gym:local-sets:";
@@ -21,6 +22,11 @@ export type CachedExercise = {
   targetSets: string | null;
   targetRirMin: number | null;
   targetRirMax: number | null;
+  targetRpeMin?: number | null;
+  targetRpeMax?: number | null;
+  role?: string;
+  isOptional?: boolean;
+  condition?: string | null;
   comment: string | null;
   restSeconds: number | null;
 };
@@ -34,6 +40,8 @@ export type CachedWorkout = {
   kind: string;
   cardioZone: string | null;
   cardioMinutes: string | null;
+  prescription?: unknown;
+  branches?: unknown;
   exercises: CachedExercise[];
 };
 
@@ -49,6 +57,7 @@ export type CachedCycle = {
 
 export type ProgramCache = {
   cachedAt: string;
+  programVersion: string;
   cycles: CachedCycle[];
   lastSetsByName: Record<string, LoggedSetLite[]>;
 };
@@ -69,14 +78,31 @@ export type OutboxPayload =
       weight: number | null;
       reps: number | null;
       rir: number | null;
+      rpe: number | null;
       velocity: "fast" | "normal" | "slow";
       stickingPoint: "chest" | "middle" | "lockout" | null;
+      isWarmup?: boolean;
+      pauseQuality?: "clean" | "short" | "lost" | null;
+      touchPoint?: "stable" | "high" | "low" | "variable" | null;
+      trajectoryQuality?: "clean" | "asymmetric" | "deviated" | null;
+      techniqueSigns?: string[];
+      painScore?: number | null;
+      symptoms?: string[];
+      videoUrl?: string | null;
+    }
+  | {
+      kind: "updateSet";
+      sessionRef: number | string;
+      setId: number;
+      weight: number | null;
+      reps: number | null;
+      rir: number | null;
+      rpe: number | null;
     }
   | {
       kind: "finish";
       sessionRef: number | string;
       finishedAt: string;
-      proposedTm?: number;
     }
   | {
       kind: "cardioFinish";
@@ -86,6 +112,10 @@ export type OutboxPayload =
       avgHr: number | null;
       speed: string | null;
       resistance: string | null;
+      modality?: string | null;
+      warmupMinutes?: number | null;
+      mainMinutes?: number | null;
+      cooldownMinutes?: number | null;
       cardioRpe: number;
       cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
       cardioSymptoms: string | null;
@@ -102,6 +132,17 @@ export type LocalSetRow = {
   weight: number | null;
   reps: number | null;
   rir: number | null;
+  rpe?: number | null;
+  velocity?: string | null;
+  stickingPoint?: string | null;
+  isWarmup?: boolean;
+  pauseQuality?: string | null;
+  touchPoint?: string | null;
+  trajectoryQuality?: string | null;
+  techniqueSigns?: unknown;
+  painScore?: number | null;
+  symptoms?: unknown;
+  videoUrl?: string | null;
 };
 
 // ---------- Кэш программы ----------
@@ -120,7 +161,13 @@ export function cacheProgram(data: Omit<ProgramCache, "cachedAt">) {
 export function loadProgram(): ProgramCache | null {
   try {
     const raw = localStorage.getItem(PROGRAM_KEY);
-    return raw ? (JSON.parse(raw) as ProgramCache) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProgramCache;
+    if (parsed.programVersion !== ACTIVE_PROGRAM_VERSION) {
+      localStorage.removeItem(PROGRAM_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -168,6 +215,51 @@ export function pushOp(op: OutboxPayload | OutboxOp) {
   setOutbox(dedupeOperationsById([...getOutbox(), operation as OutboxOp]));
 }
 
+export function replaceQueuedLocalSet(
+  sessionRef: number | string,
+  workoutExerciseId: number,
+  setNumber: number,
+  patch: { weight: number | null; reps: number | null; rir: number | null; rpe: number | null },
+): boolean {
+  let changed = false;
+  const next = getOutbox().map((op) => {
+    if (
+      op.kind === "set" &&
+      op.sessionRef === sessionRef &&
+      op.workoutExerciseId === workoutExerciseId &&
+      op.setNumber === setNumber
+    ) {
+      changed = true;
+      return { ...op, ...patch };
+    }
+    return op;
+  });
+  if (changed) setOutbox(next);
+  return changed;
+}
+
+export function removeQueuedLocalSet(
+  sessionRef: number | string,
+  workoutExerciseId: number,
+  setNumber: number,
+): boolean {
+  const current = getOutbox();
+  const next = current.filter(
+    (op) =>
+      !(
+        op.kind === "set" &&
+        op.sessionRef === sessionRef &&
+        op.workoutExerciseId === workoutExerciseId &&
+        op.setNumber === setNumber
+      ),
+  );
+  if (next.length !== current.length) {
+    setOutbox(next);
+    return true;
+  }
+  return false;
+}
+
 /** Отправляет очередь на сервер. Возвращает true, если всё ушло. */
 export async function flushOutbox(): Promise<boolean> {
   const ops = getOutbox();
@@ -194,7 +286,10 @@ export async function flushOutbox(): Promise<boolean> {
 
 // ---------- Локальные (офлайн) сессии ----------
 
-type LocalSessionMap = Record<string, { workoutId: number; startedAt: string }>;
+type LocalSessionMap = Record<
+  string,
+  { workoutId: number; startedAt: string; readiness?: ReadinessInput }
+>;
 
 function getLocalSessions(): LocalSessionMap {
   try {
@@ -229,7 +324,7 @@ export function createLocalSession(
   const key = `local-${Date.now()}`;
   const startedAt = new Date().toISOString();
   const map = getLocalSessions();
-  map[key] = { workoutId, startedAt };
+  map[key] = { workoutId, startedAt, readiness };
   setLocalSessions(map);
   pushOp({ kind: "start", localKey: key, workoutId, startedAt, readiness });
   return key;
@@ -254,12 +349,11 @@ export function cancelLocalSession(localKey: string) {
 }
 
 /** Локальная сессия завершена — подходы и финиш уже в очереди */
-export function finishLocalSession(localKey: string, proposedTm?: number) {
+export function finishLocalSession(localKey: string) {
   pushOp({
     kind: "finish",
     sessionRef: localKey,
     finishedAt: new Date().toISOString(),
-    proposedTm,
   });
   removeLocalSession(localKey);
 }

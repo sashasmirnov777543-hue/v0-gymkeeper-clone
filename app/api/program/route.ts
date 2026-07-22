@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { asc } from "drizzle-orm"
+import { asc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { ensureSchema } from "@/lib/db/migrate"
 import { cycles, workoutExercises, workouts } from "@/lib/db/schema"
@@ -11,7 +11,11 @@ export async function GET() {
   await ensureSchema()
 
   const [allCycles, allWorkouts, allExercises] = await Promise.all([
-    db.select().from(cycles).orderBy(asc(cycles.sortOrder)),
+    db
+      .select()
+      .from(cycles)
+      .where(eq(cycles.programVersion, "h2-v9-1.0"))
+      .orderBy(asc(cycles.sortOrder)),
     db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
     db
       .select()
@@ -19,7 +23,13 @@ export async function GET() {
       .orderBy(asc(workoutExercises.sortOrder)),
   ])
 
-  const names = [...new Set(allExercises.map((e) => e.name))]
+  const cycleIds = new Set(allCycles.map((cycle) => cycle.id))
+  const activeWorkouts = allWorkouts.filter((workout) => cycleIds.has(workout.cycleId))
+  const workoutIds = new Set(activeWorkouts.map((workout) => workout.id))
+  const activeExercises = allExercises.filter((exercise) =>
+    workoutIds.has(exercise.workoutId),
+  )
+  const names = [...new Set(activeExercises.map((exercise) => exercise.name))]
   const lastSetsByName = await getLastSetsByExerciseNames(names)
 
   const result = allCycles.map((c) => ({
@@ -29,7 +39,7 @@ export async function GET() {
     macrocycle: c.macrocycle,
     block: c.block,
     notes: c.notes,
-    workouts: allWorkouts
+    workouts: activeWorkouts
       .filter((w) => w.cycleId === c.id)
       .map((w) => ({
         id: w.id,
@@ -40,7 +50,9 @@ export async function GET() {
         kind: w.kind,
         cardioZone: w.cardioZone,
         cardioMinutes: w.cardioMinutes,
-        exercises: allExercises
+        prescription: w.prescription,
+        branches: w.branches,
+        exercises: activeExercises
           .filter((e) => e.workoutId === w.id)
           .map((e) => ({
             id: e.id,
@@ -52,11 +64,20 @@ export async function GET() {
             targetSets: e.targetSets,
             targetRirMin: e.targetRirMin,
             targetRirMax: e.targetRirMax,
+            targetRpeMin: e.targetRpeMin != null ? Number(e.targetRpeMin) : null,
+            targetRpeMax: e.targetRpeMax != null ? Number(e.targetRpeMax) : null,
+            role: e.role,
+            isOptional: e.isOptional,
+            condition: e.conditionCode,
             comment: e.comment,
             restSeconds: e.restSeconds,
           })),
       })),
   }))
 
-  return NextResponse.json({ cycles: result, lastSetsByName })
+  return NextResponse.json({
+    programVersion: "h2-v9-1.0",
+    cycles: result,
+    lastSetsByName,
+  })
 }

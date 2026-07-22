@@ -8,6 +8,7 @@ import {
   sessions,
   workoutExercises,
   workouts,
+  programState,
 } from "@/lib/db/schema";
 import {
   getLastCardioSession,
@@ -15,7 +16,7 @@ import {
 } from "@/app/actions/workout";
 import { SessionLogger } from "@/components/session-logger";
 import { CardioSession } from "@/components/cardio-session";
-import { isIsolationExercise, isMiniTaper } from "@/lib/training-logic";
+import { weightFromRmrefPercent } from "@/lib/program/rmref";
 
 export const dynamic = "force-dynamic";
 
@@ -71,15 +72,21 @@ export default async function SessionPage({
       speed: session.cardioSpeed,
       resistance: session.cardioResistance,
       readinessLevel: session.readinessLevel,
+      adaptationPlan: session.adaptationPlan,
       cardioRpe: session.cardioRpe,
       cardioTalkTest: session.cardioTalkTest,
       cardioSymptoms: session.cardioSymptoms,
+      modality: session.cardioModality,
+      warmupMinutes: session.cardioWarmupMinutes,
+      mainMinutes: session.cardioMainMinutes,
+      cooldownMinutes: session.cardioCooldownMinutes,
     };
     const cardioWorkout = {
       id: workout.id,
       title: workout.title,
       cardioZone: workout.cardioZone,
       cardioMinutes: workout.cardioMinutes,
+      prescription: workout.prescription,
     };
     const cardioCycle = {
       number: cardioCycleRow?.number ?? 0,
@@ -95,7 +102,7 @@ export default async function SessionPage({
     );
   }
 
-  const [[cycle], exercises, sets] = await Promise.all([
+  const [[cycle], exercises, sets, stateRows] = await Promise.all([
     db.select().from(cycles).where(eq(cycles.id, workout.cycleId)).limit(1),
     db
       .select()
@@ -107,41 +114,124 @@ export default async function SessionPage({
       .from(loggedSets)
       .where(eq(loggedSets.sessionId, sessionId))
       .orderBy(asc(loggedSets.id)),
+    db.select().from(programState).where(eq(programState.profileKey, "primary")).limit(1),
   ]);
 
   const lastSetsByName = await getLastSetsByExerciseNames(
     exercises.map((e) => e.name),
   );
 
+  const rmrefKg = Number(stateRows[0]?.rmrefKg ?? 115);
+  const adaptation =
+    session.adaptationPlan && typeof session.adaptationPlan === "object"
+      ? (session.adaptationPlan as {
+          coachAdjustment?: { patch?: Record<string, unknown> } | null;
+        })
+      : null;
+  const coachPatch = adaptation?.coachAdjustment?.patch ?? {};
+  const skippedExerciseIds = new Set(
+    Array.isArray(coachPatch.skipOptionalExerciseIds)
+      ? coachPatch.skipOptionalExerciseIds.map(String)
+      : [],
+  );
+  const weightReductionPercent =
+    coachPatch.weightReductionPercent === 2.5 || coachPatch.weightReductionPercent === 5
+      ? Number(coachPatch.weightReductionPercent)
+      : 0;
+  const removeWorkingSets = coachPatch.removeWorkingSets === 1 ? 1 : 0;
   const sessionProp = {
     id: session.id,
     status: session.status,
     startedAt: session.startedAt.toISOString(),
     notes: session.notes,
     readinessLevel: session.readinessLevel,
+    readinessReasons: session.readinessReasons,
+    adaptationPlan: session.adaptationPlan,
+    safetyStopped: session.safetyStopped,
   };
-  const workoutProp = { id: workout.id, title: workout.title };
+  const workoutProp = {
+    id: workout.id,
+    title: workout.title,
+    slot: workout.label,
+    branches: workout.branches,
+  };
   const cycleProp = {
     number: cycle?.number ?? 0,
     name: cycle?.name ?? "",
     block: cycle?.block ?? "v9",
   };
-  const cycleMiniTaper = [4, 8].includes(cycle?.number ?? 0);
-  const visibleExercises = (isMiniTaper(session.readinessLevel) || cycleMiniTaper)
-    ? exercises.filter((e) => !isIsolationExercise(e.name))
-    : exercises;
-  const exercisesProp = visibleExercises.map((e) => ({
-    id: e.id,
-    name: e.name,
-    weightText: e.weightText,
-    tempo: e.tempo,
-    targetReps: e.targetReps,
-    targetSets: e.targetSets,
-    targetRirMin: e.targetRirMin,
-    targetRirMax: e.targetRirMax,
-    comment: e.comment,
-    restSeconds: e.restSeconds,
-  }));
+
+  let visibleExercises = exercises.filter((exercise) => {
+    if (
+      skippedExerciseIds.has(String(exercise.id)) ||
+      (exercise.programKey && skippedExerciseIds.has(exercise.programKey))
+    ) {
+      return false;
+    }
+    if (coachPatch.stopSecondaryPressing === true && exercise.role.includes("secondary")) {
+      return false;
+    }
+    if (exercise.role.includes("direct_1rm")) {
+      return session.testBranch === "direct_1rm";
+    }
+    if (exercise.role.includes("test_triple")) {
+      return session.testBranch === "triple" || session.testBranch == null;
+    }
+    return true;
+  });
+  if (session.readinessLevel === "red") {
+    visibleExercises = [];
+  } else if (session.readinessLevel === "orange") {
+    const primary = exercises.find(
+      (exercise) =>
+        exercise.role.includes("primary") ||
+        /соревновательный.*жим|жим лёжа с паузой|паузный жим/i.test(exercise.name),
+    );
+    visibleExercises = primary ? [primary] : [];
+  } else if (session.readinessLevel === "yellow") {
+    visibleExercises = exercises.filter(
+      (exercise) =>
+        !exercise.isOptional &&
+        !exercise.role.includes("single") &&
+        !exercise.role.includes("test") &&
+        !exercise.role.includes("calibration"),
+    );
+  }
+
+  const reduceSetsText = (value: string | null) => {
+    if (!value || removeWorkingSets === 0 || !/^\d+$/.test(value.trim())) return value;
+    return String(Math.max(1, Number(value) - removeWorkingSets));
+  };
+  const exercisesProp = visibleExercises.map((e) => {
+    const orangeTechnique = session.readinessLevel === "orange";
+    const pctMin = e.pctMin != null ? Number(e.pctMin) : null;
+    const pctMax = e.pctMax != null ? Number(e.pctMax) : null;
+    const adjustedWeightText =
+      weightReductionPercent > 0 && pctMin != null
+        ? `${weightFromRmrefPercent(rmrefKg, pctMin * (1 - weightReductionPercent / 100))}${pctMax != null && pctMax !== pctMin ? `–${weightFromRmrefPercent(rmrefKg, pctMax * (1 - weightReductionPercent / 100))}` : ""} кг · подтверждённое снижение ${weightReductionPercent}%`
+        : e.weightText;
+    return {
+      id: e.id,
+      name: e.name,
+      weightText: orangeTechnique
+        ? `50–65% RMref · ${weightFromRmrefPercent(rmrefKg, 50)}–${weightFromRmrefPercent(rmrefKg, 65)} кг`
+        : adjustedWeightText,
+      tempo: e.tempo,
+      targetReps: orangeTechnique ? "3" : e.targetReps,
+      targetSets: orangeTechnique ? "2–3" : reduceSetsText(e.targetSets),
+      targetRirMin: orangeTechnique ? 4 : e.targetRirMin,
+      targetRirMax: orangeTechnique ? 5 : e.targetRirMax,
+      targetRpeMin: e.targetRpeMin != null ? Number(e.targetRpeMin) : null,
+      targetRpeMax: e.targetRpeMax != null ? Number(e.targetRpeMax) : null,
+      role: e.role,
+      isOptional: e.isOptional,
+      condition: e.conditionCode,
+      percentMin: e.pctMin != null ? Number(e.pctMin) : null,
+      percentMax: e.pctMax != null ? Number(e.pctMax) : null,
+      comment: e.comment,
+      restSeconds: e.restSeconds,
+    };
+  });
   const initialSetsProp = sets.map((s) => ({
     id: s.id,
     workoutExerciseId: s.workoutExerciseId,
@@ -149,8 +239,17 @@ export default async function SessionPage({
     weight: s.weight != null ? Number.parseFloat(s.weight) : null,
     reps: s.reps,
     rir: s.rir,
+    rpe: s.rpe != null ? Number(s.rpe) : null,
     velocity: s.velocity,
     stickingPoint: s.stickingPoint,
+    isWarmup: s.isWarmup,
+    pauseQuality: s.pauseQuality,
+    touchPoint: s.touchPoint,
+    trajectoryQuality: s.trajectoryQuality,
+    techniqueSigns: s.techniqueSigns,
+    painScore: s.painScore,
+    symptoms: s.symptoms,
+    videoUrl: s.videoUrl,
   }));
 
   return (

@@ -2,54 +2,159 @@
 
 import { db } from "@/lib/db";
 import {
-  appSettings,
+  coachProposals,
   cycles,
   workouts,
   workoutExercises,
   sessions,
   loggedSets,
+  programState,
 } from "@/lib/db/schema";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { applyAmrapTmRecalcInTransaction } from "@/lib/tm-recalc";
 import { ensureSchema } from "@/lib/db/migrate";
-import { readinessLevel, type ReadinessInput } from "@/lib/training-logic";
+import { assessReadiness, type ReadinessInput } from "@/lib/readiness";
+import {
+  decideV913TestBranch,
+  type V913DirectOneRmGates,
+} from "@/lib/program/gates";
 import { requireAuth } from "@/lib/require-auth";
 
 export async function startSession(
   workoutId: number,
-  readiness?: ReadinessInput,
+  readiness: ReadinessInput,
+  testSelection?: {
+    branch: "triple" | "direct_1rm";
+    spotterPresent: boolean;
+    safetiesSet: boolean;
+    sideVideoReady: boolean;
+    heavyWarmup: boolean;
+    technicalIssue: boolean;
+    directOneRm?: V913DirectOneRmGates;
+  },
 ) {
   await requireAuth();
   await ensureSchema();
-  // персональный трекер допускает только одну активную тренировку вообще
+  const assessment = assessReadiness(readiness);
+  if (assessment.level === "red") {
+    throw new Error(
+      "Красный статус: тренировка и разминка заблокированы. Действуйте по медицинской ветке.",
+    );
+  }
+
   const existing = await db
     .select()
     .from(sessions)
     .where(eq(sessions.status, "active"))
     .limit(1);
+  if (existing.length > 0) redirect(`/session/${existing[0].id}`);
 
-  if (existing.length > 0) {
-    redirect(`/session/${existing[0].id}`);
+  const [workout] = await db
+    .select({
+      id: workouts.id,
+      programKey: workouts.programKey,
+      programVersion: cycles.programVersion,
+      block: cycles.block,
+      cycleNumber: cycles.number,
+      branches: workouts.branches,
+    })
+    .from(workouts)
+    .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
+    .where(eq(workouts.id, workoutId))
+    .limit(1);
+  if (!workout) throw new Error("Тренировка не найдена");
+  const branches = Array.isArray(workout.branches)
+    ? (workout.branches as Array<{ id?: string; default?: boolean }>)
+    : [];
+  let selectedTestBranch: string | null = null;
+  if (branches.length > 0) {
+    if (!testSelection) {
+      throw new Error("Перед тестовой сессией выберите ветку и пройдите её защитный шлюз");
+    }
+    if (!branches.some((branch) => branch.id === testSelection.branch)) {
+      throw new Error("Эта тестовая ветка не предусмотрена");
+    }
+    const requestedBranch =
+      testSelection.branch === "direct_1rm" ? "direct-1rm" : "triple";
+    const decision = decideV913TestBranch({
+      readiness: assessment.level,
+      spotterPresent: testSelection.spotterPresent,
+      safetiesSet: testSelection.safetiesSet,
+      sideVideoReady: testSelection.sideVideoReady,
+      heavyWarmup: testSelection.heavyWarmup,
+      technicalIssue: testSelection.technicalIssue,
+      requestedBranch,
+      ...(requestedBranch === "direct-1rm"
+        ? { directOneRm: testSelection.directOneRm }
+        : {}),
+    } as Parameters<typeof decideV913TestBranch>[0]);
+    if (decision.action !== "perform") {
+      throw new Error(
+        decision.action === "postpone"
+          ? "Тест нужно перенести на 24–72 часа и начинать только после возврата зелёного статуса"
+          : decision.action === "delay-or-end-block"
+            ? "Тяжёлая разминка/техническая проблема: отложите тест на 5–7 дней или завершите блок без теста"
+            : decision.action === "medical-branch"
+              ? "Красный статус: тест отменён, действует медицинская ветка"
+              : "Защитный шлюз теста не пройден",
+      );
+    }
+    if (requestedBranch === "direct-1rm" && decision.branch !== "direct-1rm") {
+      throw new Error("Шлюзы прямого 1ПМ не пройдены; выберите стандартную тройку отдельно");
+    }
+    selectedTestBranch = decision.branch === "direct-1rm" ? "direct_1rm" : "triple";
   }
 
-  const recent = readiness
-    ? []
-    : await db
-        .select({ readinessLevel: sessions.readinessLevel })
-        .from(sessions)
-        .orderBy(desc(sessions.startedAt))
-        .limit(20);
-  const inheritedReadiness =
-    recent.find((row) => row.readinessLevel)?.readinessLevel ?? null;
+  const [coachAdjustment] = workout.programKey
+    ? await db
+        .select({
+          id: coachProposals.id,
+          kind: coachProposals.kind,
+          target: coachProposals.target,
+          patch: coachProposals.patch,
+          rationale: coachProposals.rationale,
+          expiresAt: coachProposals.expiresAt,
+        })
+        .from(coachProposals)
+        .where(
+          and(
+            eq(coachProposals.status, "applied"),
+            eq(coachProposals.target, workout.programKey),
+          ),
+        )
+        .orderBy(desc(coachProposals.appliedAt))
+        .limit(1)
+    : [];
+  const activeCoachAdjustment =
+    coachAdjustment &&
+    (!coachAdjustment.expiresAt || coachAdjustment.expiresAt.getTime() >= Date.now())
+      ? coachAdjustment
+      : null;
+
   const inserted = await db
     .insert(sessions)
     .values({
       workoutId,
-      ...(readiness
-        ? { ...readiness, readinessLevel: readinessLevel(readiness) }
-        : { readinessLevel: inheritedReadiness }),
+      programVersion: workout.programVersion,
+      testBranch: selectedTestBranch,
+      sleepMinutes: readiness.sleepMinutes,
+      sleepQuality: readiness.sleepQuality,
+      shoulderPain: readiness.shoulderPain,
+      backPain: readiness.backPain,
+      energy: readiness.energy,
+      morningPulseDelta:
+        readiness.restingHeartRateTrend?.deltaFromBaselineBpm != null
+          ? Math.round(readiness.restingHeartRateTrend.deltaFromBaselineBpm)
+          : null,
+      readinessLevel: assessment.level,
+      readinessInput: readiness,
+      readinessReasons: assessment.reasonCodes,
+      adaptationPlan: {
+        readiness: assessment.permittedAction,
+        coachAdjustment: activeCoachAdjustment,
+      },
+      redFlags: readiness.clinicalStopFlags ?? {},
     })
     .onConflictDoNothing()
     .returning({ id: sessions.id });
@@ -71,7 +176,15 @@ async function assertExerciseBelongsToSession(sessionId: number, exerciseId: num
   const [row] = await db.select({ id: sessions.id }).from(sessions)
     .innerJoin(workouts, eq(sessions.workoutId, workouts.id))
     .innerJoin(workoutExercises, eq(workoutExercises.workoutId, workouts.id))
-    .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active"), eq(workoutExercises.id, exerciseId))).limit(1);
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.status, "active"),
+        eq(sessions.safetyStopped, false),
+        eq(workoutExercises.id, exerciseId),
+      ),
+    )
+    .limit(1);
   if (!row) throw new Error("Подход не принадлежит активной сессии");
 }
 async function assertSetBelongsToSession(setId: number, sessionId: number) {
@@ -86,11 +199,38 @@ export async function logSet(input: {
   weight: number | null;
   reps: number | null;
   rir: number | null;
+  rpe: number | null;
   velocity: "fast" | "normal" | "slow";
   stickingPoint: "chest" | "middle" | "lockout" | null;
+  isWarmup?: boolean;
+  pauseQuality?: "clean" | "short" | "lost" | null;
+  touchPoint?: "stable" | "high" | "low" | "variable" | null;
+  trajectoryQuality?: "clean" | "asymmetric" | "deviated" | null;
+  techniqueSigns?: string[];
+  painScore?: number | null;
+  symptoms?: string[];
+  videoUrl?: string | null;
 }) {
   await requireAuth();
   await assertExerciseBelongsToSession(input.sessionId, input.workoutExerciseId);
+  if (!Number.isInteger(input.setNumber) || input.setNumber < 1 || input.setNumber > 30) {
+    throw new Error("Некорректный номер подхода");
+  }
+  if (input.weight != null && (!Number.isFinite(input.weight) || input.weight < 0 || input.weight > 500)) {
+    throw new Error("Некорректный вес");
+  }
+  if (input.reps != null && (!Number.isInteger(input.reps) || input.reps < 0 || input.reps > 100)) {
+    throw new Error("Некорректные повторения");
+  }
+  if (input.rir != null && (!Number.isInteger(input.rir) || input.rir < 0 || input.rir > 10)) {
+    throw new Error("RIR должен быть от 0 до 10");
+  }
+  if (input.rpe != null && (!Number.isFinite(input.rpe) || input.rpe < 0 || input.rpe > 10)) {
+    throw new Error("RPE должен быть от 0 до 10");
+  }
+  if (input.painScore != null && (!Number.isInteger(input.painScore) || input.painScore < 0 || input.painScore > 10)) {
+    throw new Error("Боль должна быть от 0 до 10");
+  }
   const inserted = await db
     .insert(loggedSets)
     .values({
@@ -100,10 +240,29 @@ export async function logSet(input: {
       weight: input.weight != null ? String(input.weight) : null,
       reps: input.reps,
       rir: input.rir,
+      rpe: input.rpe != null ? String(input.rpe) : null,
       velocity: input.velocity,
       stickingPoint: input.stickingPoint,
+      isWarmup: input.isWarmup ?? false,
+      pauseQuality: input.pauseQuality ?? null,
+      touchPoint: input.touchPoint ?? null,
+      trajectoryQuality: input.trajectoryQuality ?? null,
+      techniqueSigns: input.techniqueSigns ?? [],
+      painScore: input.painScore ?? null,
+      symptoms: input.symptoms ?? [],
+      videoUrl: input.videoUrl?.trim() || null,
     })
     .returning({ id: loggedSets.id });
+  if (
+    input.symptoms?.some((value) =>
+      ["medical_symptom", "pain_changes_movement", "unsafe_loss_of_control"].includes(value),
+    )
+  ) {
+    await db
+      .update(sessions)
+      .set({ safetyStopped: true })
+      .where(eq(sessions.id, input.sessionId));
+  }
   revalidatePath(`/session/${input.sessionId}`);
   return { id: inserted[0].id };
 }
@@ -115,27 +274,35 @@ export async function deleteSet(setId: number, sessionId: number) {
   revalidatePath(`/session/${sessionId}`);
 }
 
-export async function finishSession(sessionId: number, proposedTm?: number) {
+export async function finishSession(sessionId: number) {
   await requireAuth();
-  const recalc = await db.transaction(async (tx) => {
-    const changed = await tx.update(sessions).set({ status: "completed", finishedAt: new Date() })
-      .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active"))).returning({id:sessions.id});
+  await db.transaction(async (tx) => {
+    const changed = await tx
+      .update(sessions)
+      .set({ status: "completed", finishedAt: new Date() })
+      .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active")))
+      .returning({ id: sessions.id, workoutId: sessions.workoutId });
     if (!changed.length) throw new Error("Сессия уже завершена или не найдена");
-    return applyAmrapTmRecalcInTransaction(tx, sessionId, { proposedTm });
+    const [position] = await tx
+      .select({ dayOffset: cycles.dayOffset, dayInCycle: workouts.dayInCycle })
+      .from(workouts)
+      .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
+      .where(eq(workouts.id, changed[0].workoutId))
+      .limit(1);
+    if (position?.dayOffset != null && position.dayInCycle != null) {
+      const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+      await tx
+        .update(programState)
+        .set({
+          currentProgramDay: sql`greatest(${programState.currentProgramDay}, ${nextDay})`,
+          updatedAt: new Date(),
+        })
+        .where(eq(programState.profileKey, "primary"));
+    }
   });
 
   revalidatePath("/");
   revalidatePath("/history");
-  if (recalc) {
-    const q = new URLSearchParams({
-      tmMacro: String(recalc.macro),
-      newTm: String(recalc.newTm),
-      oldTm: recalc.oldTm != null ? String(recalc.oldTm) : "",
-      e1rm: String(recalc.e1rm),
-      amrap: `${recalc.amrapWeight}x${recalc.amrapReps}`,
-    });
-    redirect(`/history?${q.toString()}`);
-  }
   redirect("/history");
 }
 
@@ -167,15 +334,22 @@ export async function updateSet(input: {
   weight: number | null;
   reps: number | null;
   rir: number | null;
+  rpe?: number | null;
 }) {
   await requireAuth();
   await assertSetBelongsToSession(input.setId, input.sessionId);
+  if (input.rpe != null && (!Number.isFinite(input.rpe) || input.rpe < 0 || input.rpe > 10)) {
+    throw new Error("RPE должен быть от 0 до 10");
+  }
   await db
     .update(loggedSets)
     .set({
       weight: input.weight != null ? String(input.weight) : null,
       reps: input.reps,
       rir: input.rir,
+      ...(input.rpe !== undefined
+        ? { rpe: input.rpe != null ? String(input.rpe) : null }
+        : {}),
     })
     .where(eq(loggedSets.id, input.setId));
   revalidatePath(`/session/${input.sessionId}`);
@@ -188,26 +362,60 @@ export async function finishCardioSession(input: {
   avgHr: number | null;
   speed?: string | null;
   resistance?: string | null;
+  modality?: string | null;
+  warmupMinutes?: number | null;
+  mainMinutes?: number | null;
+  cooldownMinutes?: number | null;
   cardioRpe: number;
   cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
   cardioSymptoms?: string | null;
 }) {
   await requireAuth();
   await ensureSchema();
-  await db
-    .update(sessions)
-    .set({
-      status: "completed",
-      finishedAt: new Date(),
-      durationSeconds: input.durationSeconds,
-      avgHr: input.avgHr,
-      cardioSpeed: input.speed ?? null,
-      cardioResistance: input.resistance ?? null,
-      cardioRpe: input.cardioRpe,
-      cardioTalkTest: input.cardioTalkTest,
-      cardioSymptoms: input.cardioSymptoms?.trim() || null,
-    })
-    .where(eq(sessions.id, input.sessionId));
+  if (!Number.isInteger(input.durationSeconds) || input.durationSeconds < 0) {
+    throw new Error("Некорректная длительность кардио");
+  }
+  if (!Number.isInteger(input.cardioRpe) || input.cardioRpe < 1 || input.cardioRpe > 10) {
+    throw new Error("RPE кардио должен быть от 1 до 10");
+  }
+  await db.transaction(async (tx) => {
+    const changed = await tx
+      .update(sessions)
+      .set({
+        status: "completed",
+        finishedAt: new Date(),
+        durationSeconds: input.durationSeconds,
+        avgHr: input.avgHr,
+        cardioSpeed: input.speed ?? null,
+        cardioResistance: input.resistance ?? null,
+        cardioModality: input.modality ?? null,
+        cardioWarmupMinutes: input.warmupMinutes ?? null,
+        cardioMainMinutes: input.mainMinutes ?? null,
+        cardioCooldownMinutes: input.cooldownMinutes ?? null,
+        cardioRpe: input.cardioRpe,
+        cardioTalkTest: input.cardioTalkTest,
+        cardioSymptoms: input.cardioSymptoms?.trim() || null,
+      })
+      .where(and(eq(sessions.id, input.sessionId), eq(sessions.status, "active")))
+      .returning({ workoutId: sessions.workoutId });
+    if (!changed.length) throw new Error("Кардио уже завершено или не найдено");
+    const [position] = await tx
+      .select({ dayOffset: cycles.dayOffset, dayInCycle: workouts.dayInCycle })
+      .from(workouts)
+      .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
+      .where(eq(workouts.id, changed[0].workoutId))
+      .limit(1);
+    if (position?.dayOffset != null && position.dayInCycle != null) {
+      const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+      await tx
+        .update(programState)
+        .set({
+          currentProgramDay: sql`greatest(${programState.currentProgramDay}, ${nextDay})`,
+          updatedAt: new Date(),
+        })
+        .where(eq(programState.profileKey, "primary"));
+    }
+  });
   revalidatePath("/");
   revalidatePath("/history");
 }
@@ -350,17 +558,4 @@ export async function getExerciseHistory(name: string, limit = 6) {
     .slice(0, limit)
     .reverse()
     .map((id) => bySession.get(id)!);
-}
-
-/** Переключение активного программного блока (V9 / H2) */
-export async function setActiveBlock(block: "v9" | "h2") {
-  await requireAuth();
-  await db
-    .insert(appSettings)
-    .values({ key: "active_block", value: block })
-    .onConflictDoUpdate({
-      target: appSettings.key,
-      set: { value: block },
-    });
-  revalidatePath("/");
 }
