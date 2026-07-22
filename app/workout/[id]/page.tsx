@@ -351,7 +351,7 @@ export default async function WorkoutPage({
         )}
       </main>
 
-      <div className="fixed inset-x-0 bottom-32 z-40">
+      <div className="fixed inset-x-0 bottom-32 z-[60]">
         <div className="mx-auto max-w-lg px-4 pb-2">
           <StartWorkoutButton
             workoutId={workoutId}
