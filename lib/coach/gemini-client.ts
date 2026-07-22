@@ -113,7 +113,7 @@ function validateStructuredResponse(value: unknown): CoachStructuredResponse {
   };
 }
 
-export async function askGeminiCoach(input: {
+async function askGeminiCoachOnce(input: {
   messages: readonly CoachMessage[];
   trustedContext: string;
   signal?: AbortSignal;
@@ -165,4 +165,19 @@ export async function askGeminiCoach(input: {
     model,
     requestId,
   };
+}
+
+export async function askGeminiCoach(input: {
+  messages: readonly CoachMessage[];
+  trustedContext: string;
+  signal?: AbortSignal;
+}): Promise<GeminiCoachResult> {
+  try {
+    return await askGeminiCoachOnce(input);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    return await askGeminiCoachOnce(input);
+  }
 }
