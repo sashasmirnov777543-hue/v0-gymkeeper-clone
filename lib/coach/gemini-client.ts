@@ -195,8 +195,16 @@ export async function askGeminiCoach(input: {
     return await askGeminiCoachOnce(input);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw error;
-    }
-    return await askGeminiCoachOnce(input);
+  throw error;
+}
+if (
+  error instanceof Error &&
+  (error.message.includes("429") || /quota|rate limit/i.test(error.message))
+) {
+  throw new Error(
+    "Лимит запросов Gemini исчерпан. Подождите 1–2 минуты; если не помогло — дневная квота обновится около 10–11 утра по Москве.",
+  );
+}
+return await askGeminiCoachOnce(input);
   }
 }
