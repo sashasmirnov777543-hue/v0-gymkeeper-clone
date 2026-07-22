@@ -138,7 +138,7 @@ async function askGeminiCoachOnce(input: {
   signal?: AbortSignal;
 }): Promise<GeminiCoachResult> {
   const { url, apiKey, model } = configuredEndpoint();
-  const messages = input.messages.slice(-24).map((message) => ({
+  const messages = input.messages.slice(-10).map((message) => ({
     role: message.role,
     content: message.content.slice(0, 6_000),
   }));
