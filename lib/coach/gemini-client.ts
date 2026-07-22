@@ -75,10 +75,29 @@ function validateStructuredResponse(value: unknown): CoachStructuredResponse {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Некорректный структурированный ответ Gemini");
   }
-  const row = value as Record<string, unknown>;
-  if (typeof row.message !== "string" || row.message.trim().length === 0) {
-    throw new Error("Gemini не вернул сообщение");
+  let row = value as Record<string, unknown>;
+if (typeof row.message !== "string") {
+  for (const key of ["response", "result", "data", "output"]) {
+    const inner = row[key];
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+      row = inner as Record<string, unknown>;
+      break;
+    }
   }
+}
+if (typeof row.message !== "string" || row.message.trim().length === 0) {
+  for (const key of ["answer", "reply", "text", "content"]) {
+    const alt = row[key];
+    if (typeof alt === "string" && alt.trim().length > 0) {
+      row = { ...row, message: alt };
+      break;
+    }
+  }
+}
+if (typeof row.message !== "string" || row.message.trim().length === 0) {
+  console.error("GEMINI SHAPE:", JSON.stringify(value).slice(0, 2000));
+  throw new Error("Gemini не вернул сообщение");
+}
   const questions = Array.isArray(row.questions)
     ? row.questions.filter((item): item is string => typeof item === "string").slice(0, 3)
     : [];
