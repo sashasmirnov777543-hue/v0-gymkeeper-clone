@@ -610,6 +610,7 @@ function CurrentExercise({
           defaultWeight={recommendation?.weight ?? prescribed}
           targetRirMin={exercise.targetRirMin}
           targetRpeMax={exercise.targetRpeMax ?? null}
+          targetReps={exercise.targetReps}
           onSubmit={async (draft) => {
             const temporaryId = -Date.now();
             const setNumber = doneSets.length + 1;
