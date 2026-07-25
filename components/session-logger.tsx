@@ -690,12 +690,14 @@ function SetForm({
   defaultWeight,
   targetRirMin,
   targetRpeMax,
+  targetReps,
   onSubmit,
 }: {
   bench: boolean;
   defaultWeight: number | null;
   targetRirMin: number | null;
   targetRpeMax: number | null;
+  targetReps: string | null;
   onSubmit: (draft: SetDraft) => Promise<void>;
 }) {
   const [weight, setWeight] = useState(defaultWeight != null ? String(defaultWeight) : "");
@@ -724,6 +726,15 @@ function SetForm({
     setTechniqueSigns((current) =>
       current.includes(sign) ? current.filter((item) => item !== sign) : [...current, sign],
     );
+  const repChips = (() => {
+  const nums = (targetReps ?? "").match(/\d+/g)?.map(Number) ?? [];
+  if (nums.length === 0) return [];
+  const lo = Math.min(...nums);
+  const hi = Math.max(...nums);
+  const chips: number[] = [];
+  for (let n = Math.max(1, lo - 1); n <= hi + 1 && chips.length < 7; n += 1) chips.push(n);
+  return chips;
+})();
 
   return (
     <form
@@ -770,6 +781,13 @@ function SetForm({
           <input inputMode="numeric" value={reps} onChange={(event) => setReps(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-2 text-center text-base font-semibold" />
         </label>
       </div>
+      {repChips.length > 0 && (
+  <div className="flex flex-wrap gap-1.5">
+    {repChips.map((n) => (
+      <button key={n} type="button" onClick={() => setReps(String(n))} className={`min-h-9 min-w-10 flex-1 rounded-md border px-2 text-xs font-semibold ${reps === String(n) ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{n}</button>
+    ))}
+  </div>
+)}
 
       {(bench || targetRpeMax != null) && (
   <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 10]} selected={rpe} set={setRpe} />
