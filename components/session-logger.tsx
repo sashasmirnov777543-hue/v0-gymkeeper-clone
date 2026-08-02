@@ -638,6 +638,11 @@ function CurrentExercise({
               symptoms,
             };
             onLogged(row);
+            // Последний плановый подход упражнения — сами открываем следующее.
+            // Задержка даёт увидеть, что подход записан; таймер отдыха идёт поверх.
+            if (targetSets != null && setNumber >= targetSets && onAdvance) {
+              setTimeout(onAdvance, 900);
+            }
             if (exercise.restSeconds && exercise.restSeconds > 0) {
               const nextRecommendation = recommendWeight(
                 [...doneSets.map((set) => ({ weight: set.weight, reps: set.reps, rir: set.rir })), draft],
@@ -712,7 +717,12 @@ function SetForm({
   onSubmit: (draft: SetDraft) => Promise<void>;
 }) {
   const [weight, setWeight] = useState(defaultWeight != null ? String(defaultWeight) : "");
-  const [reps, setReps] = useState("");
+  // Повторы предзаполняются из цели: для точного числа — им, для диапазона — нижней
+  // границей (верх диапазона надо заработать). Фишки рядом позволяют поправить в один тап.
+  const [reps, setReps] = useState(() => {
+    const nums = (targetReps ?? "").match(/\d+/g)?.map(Number) ?? [];
+    return nums.length ? String(Math.min(...nums)) : "";
+  });
   const [rir, setRir] = useState<number | null>(targetRirMin);
   const [rpe, setRpe] = useState<number | null>(targetRpeMax);
   const [velocity, setVelocity] = useState<"fast" | "normal" | "slow">("normal");
@@ -747,37 +757,45 @@ function SetForm({
   return chips;
 })();
 
+  // Быстрая запись возможна, когда повторы уже заданы: тогда касание по шкале
+  // усилия само сохраняет подход и запускает отдых.
+  const canQuickSave = reps.trim() !== "" && !saving;
+
+  async function commit(effort?: { rpe?: number | null; rir?: number | null }) {
+    unlockAudio();
+    setSaving(true);
+    try {
+      const parsedWeight = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null;
+      const parsedReps = reps.trim() ? Number.parseInt(reps, 10) : null;
+      await onSubmit({
+        weight: Number.isNaN(parsedWeight as number) ? null : parsedWeight,
+        reps: Number.isNaN(parsedReps as number) ? null : parsedReps,
+        rir: effort && "rir" in effort ? (effort.rir ?? null) : rir,
+        rpe: effort && "rpe" in effort ? (effort.rpe ?? null) : rpe,
+        velocity,
+        stickingPoint,
+        isWarmup,
+        pauseQuality,
+        touchPoint,
+        trajectoryQuality,
+        techniqueSigns,
+        painScore,
+        painChangesMovement,
+        medicalSymptom,
+        unsafeLossOfControl,
+        videoUrl: videoUrl.trim() || null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <form
       className="space-y-4 rounded-xl border border-border bg-card p-4"
       onSubmit={async (event) => {
         event.preventDefault();
-        unlockAudio();
-        setSaving(true);
-        try {
-          const parsedWeight = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null;
-          const parsedReps = reps.trim() ? Number.parseInt(reps, 10) : null;
-          await onSubmit({
-            weight: Number.isNaN(parsedWeight as number) ? null : parsedWeight,
-            reps: Number.isNaN(parsedReps as number) ? null : parsedReps,
-            rir,
-            rpe,
-            velocity,
-            stickingPoint,
-            isWarmup,
-            pauseQuality,
-            touchPoint,
-            trajectoryQuality,
-            techniqueSigns,
-            painScore,
-            painChangesMovement,
-            medicalSymptom,
-            unsafeLossOfControl,
-            videoUrl: videoUrl.trim() || null,
-          });
-        } finally {
-          setSaving(false);
-        }
+        await commit();
       }}
     >
       <div className="grid grid-cols-2 gap-3">
@@ -801,9 +819,29 @@ function SetForm({
 )}
 
       {(bench || targetRpeMax != null) && (
-  <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]} selected={rpe} set={setRpe} />
-)}
-      <ScaleButtons label="Фактический RIR" values={[0, 1, 2, 3, 4, 5]} selected={rir} set={setRir} />
+        <ScaleButtons
+          label={canQuickSave ? "Фактический RPE — касание записывает подход" : "Фактический RPE"}
+          values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]}
+          selected={rpe}
+          set={setRpe}
+          quickSave={canQuickSave ? (value) => { setRpe(value); void commit({ rpe: value }); } : undefined}
+        />
+      )}
+      <ScaleButtons
+        label={
+          canQuickSave && !(bench || targetRpeMax != null)
+            ? "Фактический RIR — касание записывает подход"
+            : "Фактический RIR"
+        }
+        values={[0, 1, 2, 3, 4, 5]}
+        selected={rir}
+        set={setRir}
+        quickSave={
+          canQuickSave && !(bench || targetRpeMax != null)
+            ? (value) => { setRir(value); void commit({ rir: value }); }
+            : undefined
+        }
+      />
 
       {bench && (
         <div className="grid gap-3 sm:grid-cols-3">
@@ -850,7 +888,9 @@ function SetForm({
         </div>
       </fieldset>
         )}
-      <Button type="submit" disabled={saving} className="h-11 w-full">{saving ? "Сохраняю…" : "Записать подход"}</Button>
+      <Button type="submit" disabled={saving} variant={canQuickSave ? "outline" : "default"} className="h-11 w-full">
+        {saving ? "Сохраняю…" : canQuickSave ? "Записать без оценки усилия" : "Записать подход"}
+      </Button>
     </form>
   );
 }
@@ -878,9 +918,16 @@ function EditSetForm({ set, onSave, onCancel }: { set: SessionSetRow; onSave: (v
   );
 }
 
-function ScaleButtons({ label, values, selected, set }: { label: string; values: readonly number[]; selected: number | null; set: (value: number | null) => void }) {
+function ScaleButtons({ label, values, selected, set, quickSave }: {
+  label: string;
+  values: readonly number[];
+  selected: number | null;
+  set: (value: number | null) => void;
+  /** Когда задан, касание по шкале сразу записывает подход, а не просто выбирает значение. */
+  quickSave?: (value: number) => void;
+}) {
   return (
-    <fieldset><legend className="text-xs text-muted-foreground">{label}</legend><div className="mt-1 flex flex-wrap gap-1.5">{values.map((value) => <button key={value} type="button" onClick={() => set(selected === value ? null : value)} className={`min-h-9 min-w-10 flex-1 rounded-md border px-2 text-xs font-semibold ${selected === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value}</button>)}</div></fieldset>
+    <fieldset><legend className="text-xs text-muted-foreground">{label}</legend><div className="mt-1 flex flex-wrap gap-1.5">{values.map((value) => <button key={value} type="button" onClick={() => (quickSave ? quickSave(value) : set(selected === value ? null : value))} className={`min-h-11 min-w-10 flex-1 rounded-md border px-2 text-xs font-semibold ${selected === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value}</button>)}</div></fieldset>
   );
 }
 
