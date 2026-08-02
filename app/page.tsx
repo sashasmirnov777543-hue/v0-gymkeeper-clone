@@ -33,9 +33,10 @@ import {
   getTodayItem,
 } from "@/lib/program/calendar";
 import { assessRhrTrend } from "@/lib/rhr";
+import { ACTIVE_PROGRAM_VERSION } from "@/lib/program/version";
 
 export const dynamic = "force-dynamic";
-const PROGRAM_VERSION = "h2-v9-1.0";
+const PROGRAM_VERSION: string = ACTIVE_PROGRAM_VERSION;
 
 function torontoDate() {
   return new Intl.DateTimeFormat("en-CA", {

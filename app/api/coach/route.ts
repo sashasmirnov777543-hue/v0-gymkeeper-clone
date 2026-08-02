@@ -99,7 +99,7 @@ async function runtimeContext() {
   );
   return {
     now: new Date().toISOString(),
-    programVersion: state?.programVersion ?? "h2-v9-1.0",
+    programVersion: state?.programVersion ?? "h2-v9-2.0",
     programDay,
     currentBlock: descriptor?.block ?? null,
     currentCycle: descriptor?.cycle ?? null,

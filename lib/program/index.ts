@@ -1,4 +1,4 @@
-import rawProgram from "./h2-v9-v1.json" with { type: "json" };
+import rawProgram from "./h2-v9-v2.json" with { type: "json" };
 import type {
   ProgramBlock,
   ProgramCycle,

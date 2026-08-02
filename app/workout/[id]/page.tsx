@@ -140,7 +140,7 @@ export default async function WorkoutPage({
                     : "По плану"}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Зона {workout.cardioZone ?? "Z2"}
+                  Зона {workout.cardioZone ?? "Z1"}
                 </p>
               </div>
             </div>

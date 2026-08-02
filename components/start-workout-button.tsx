@@ -281,7 +281,7 @@ export function StartWorkoutButton({
             {testBranches && testBranches.length > 0 && (
               <fieldset className="mt-4 rounded-xl border border-primary/40 bg-primary/5 p-3">
                 <legend className="px-1 text-sm font-semibold text-primary">
-                  Шлюз теста V9-13
+                  Шлюз итогового теста
                 </legend>
                 <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
                   Выберите одну ветку до разминки. Тройка и прямой 1ПМ взаимоисключающие.
@@ -308,12 +308,12 @@ export function StartWorkoutButton({
                     <CheckRow label="Актуальная офтальмологическая оценка и ограничения выполнены" checked={testGate.ophthalmologySatisfied} onChange={(value) => setTestGate({ ...testGate, ophthalmologySatisfied: value })} />
                     <CheckRow label="Нет симптомов и боли, меняющей технику" checked={testGate.noRelevantSymptoms} onChange={(value) => setTestGate({ ...testGate, noRelevantSymptoms: value })} />
                     <CheckRow label="Нет недавней смены лекарств, болезни, обезвоживания или выраженного недосыпа" checked={testGate.noRecentMedicationIllnessHydrationSleepIssue} onChange={(value) => setTestGate({ ...testGate, noRecentMedicationIllnessHydrationSleepIssue: value })} />
-                    <CheckRow label="Сингл V9-11 прошёл уверенно при RPE ≤8" checked={testGate.v911SingleConfident} onChange={(value) => setTestGate({ ...testGate, v911SingleConfident: value })} />
-                    <CheckRow label="V9-12 B2 и праймер прошли без симптомов и ухудшения техники" checked={testGate.v912Clean} onChange={(value) => setTestGate({ ...testGate, v912Clean: value })} />
+                    <CheckRow label="Сингл цикла 21 (v9-12) прошёл уверенно при RPE ≤8" checked={testGate.v911SingleConfident} onChange={(value) => setTestGate({ ...testGate, v911SingleConfident: value })} />
+                    <CheckRow label="Праймер T−4 прошёл без ухудшения техники" checked={testGate.v912Clean} onChange={(value) => setTestGate({ ...testGate, v912Clean: value })} />
                     <CheckRow label="План попыток заранее согласован с квалифицированным тренером" checked={testGate.attemptPlanAgreed} onChange={(value) => setTestGate({ ...testGate, attemptPlanAgreed: value })} />
                     <CheckRow label="Не требуется большой непроверенный скачок веса" checked={testGate.noLargeUnverifiedJump} onChange={(value) => setTestGate({ ...testGate, noLargeUnverifiedJump: value })} />
                     <div className="mt-2 grid grid-cols-2 gap-3">
-                      <NumberField label="RPE сингла V9-11" value={testGate.v911SingleRpe} min={1} max={10} onChange={(value) => setTestGate({ ...testGate, v911SingleRpe: value })} />
+                      <NumberField label="RPE последнего сингла" value={testGate.v911SingleRpe} min={1} max={10} onChange={(value) => setTestGate({ ...testGate, v911SingleRpe: value })} />
                       <NumberField label="План попыток" value={testGate.plannedAttempts} min={1} max={3} onChange={(value) => setTestGate({ ...testGate, plannedAttempts: value })} />
                     </div>
                   </div>

@@ -177,7 +177,7 @@ export async function POST(req: Request) {
               workoutId: op.workoutId,
               startedAt: new Date(op.startedAt),
               status: "active",
-              programVersion: program?.programVersion ?? "h2-v9-1.0",
+              programVersion: program?.programVersion ?? "h2-v9-2.0",
               sleepMinutes: op.readiness.sleepMinutes,
               sleepQuality: op.readiness.sleepQuality,
               shoulderPain: op.readiness.shoulderPain,

@@ -12,6 +12,9 @@ export function e1rmForStats(
 ): number | null {
   if (!isE1rmExercise(name) || reps < 1 || reps > 10 || weight <= 0)
     return null;
-  const estimate = reps === 1 ? weight : weight * (1 + reps / 30);
+  // Редакция 2.0: для тройки используется коэффициент RPE-таблицы (÷0,863),
+  // а не Эпли — она занижает неотказной подход примерно на 5%.
+  const estimate =
+    reps === 1 ? weight : reps === 3 ? weight / 0.863 : weight * (1 + reps / 30);
   return Math.round(estimate * 10) / 10;
 }
