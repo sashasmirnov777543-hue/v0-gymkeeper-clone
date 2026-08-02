@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { Bot, CalendarDays, DatabaseBackup, HeartPulse, Scale } from "lucide-react";
+import { Bot, CalendarDays, DatabaseBackup, HeartPulse, Scale, ShieldCheck } from "lucide-react";
 import { db } from "@/lib/db";
 import {
   programState,
@@ -12,12 +12,39 @@ import { BackupRestore } from "@/components/backup-restore";
 import {
   addRecoveryDays,
   reviewAndApplyRmref,
+  setClearanceLevel,
   setCurrentProgramDay,
   setProgramStartDate,
   setTestDate,
 } from "@/app/actions/program";
+import {
+  CLEARANCE_LEVELS,
+  CLEARANCE_LEVEL_LABEL,
+  DEFAULT_CLEARANCE_LEVEL,
+  isClearanceLevel,
+  type ClearanceLevel,
+} from "@/lib/program/version";
 
 export const dynamic = "force-dynamic";
+
+/** Контрольные точки RMref редакции 2.0: шесть замеров вместо трёх. */
+const RMREF_CHECKPOINT_OPTIONS = [
+  ["h2-1", "Ц1 — базовый замер"],
+  ["h2-5", "Ц5 — контрольная точка №1"],
+  ["h2-9", "Ц9 — контрольная точка №2"],
+  ["v9-5", "Ц14 — контрольная точка №3"],
+  ["v9-11", "Ц20 — контрольная точка №4"],
+  ["v9-13", "Ц22 — тест"],
+] as const;
+
+/** RMref = вес калибровочной тройки ÷ 0,863, вниз до шага 2,5 кг. */
+const CALIBRATION_TRIPLE_DIVISOR = 0.863;
+const RMREF_STEP_KG = 2.5;
+const RMREF_MAX_CHANGE_KG = 5;
+
+function rmrefFromCalibrationTriple(tripleKg: number): number {
+  return Math.floor(tripleKg / CALIBRATION_TRIPLE_DIVISOR / RMREF_STEP_KG) * RMREF_STEP_KG;
+}
 
 export default async function SettingsPage() {
   const [stateRows, recoveries, rhrRows, reviews] = await Promise.all([
@@ -28,11 +55,18 @@ export default async function SettingsPage() {
   ]);
   const state = stateRows[0];
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+  const currentRmrefKg = Number(state?.rmrefKg ?? 115);
+  // Колонка допуска может ещё отсутствовать в состоянии программы — читаем мягко.
+  const storedClearanceLevel =
+    state && "clearanceLevel" in state ? state.clearanceLevel : undefined;
+  const clearanceLevel: ClearanceLevel = isClearanceLevel(storedClearanceLevel)
+    ? storedClearanceLevel
+    : DEFAULT_CLEARANCE_LEVEL;
 
   return (
     <main className="mx-auto min-h-dvh w-full max-w-lg px-4 pb-40 pt-5">
       <h1 className="text-2xl font-bold">Настройки программы</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Календарь, единый RMref, RHR, Gemini и резервная копия.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Календарь, единый RMref, уровень допуска, RHR, Gemini и резервная копия.</p>
 
       <section className="mt-5 rounded-2xl border border-border bg-card p-4">
         <div className="flex items-center gap-3"><CalendarDays className="size-5 text-primary" /><div><h2 className="font-bold">Календарь 176 дней</h2><p className="text-xs text-muted-foreground">Дополнительный отдых сдвигает последующие даты.</p></div></div>
@@ -63,14 +97,23 @@ export default async function SettingsPage() {
       </section>
 
       <section className="mt-4 rounded-2xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><Scale className="size-5 text-primary" /><div><h2 className="font-bold">Единый RMref</h2><p className="text-xs text-muted-foreground">Не TM по макроциклам и не AMRAP.</p></div></div><strong className="font-mono text-xl">{Number(state?.rmrefKg ?? 115)} кг</strong></div>
+        <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><Scale className="size-5 text-primary" /><div><h2 className="font-bold">Единый RMref</h2><p className="text-xs text-muted-foreground">Не TM по макроциклам и не AMRAP.</p></div></div><strong className="font-mono text-xl">{currentRmrefKg} кг</strong></div>
         <details className="mt-4 rounded-xl border border-border p-3">
-          <summary className="cursor-pointer text-sm font-semibold">Проверить повышение +2,5 кг</summary>
+          <summary className="cursor-pointer text-sm font-semibold">Пересчитать RMref по калибровочной тройке</summary>
           <form action={reviewAndApplyRmref} className="mt-3 space-y-3">
+            <p className="rounded-lg bg-secondary px-3 py-2 text-xs leading-relaxed text-secondary-foreground">
+              RMref выводится из замера, а не назначается: <strong>RMref = вес калибровочной тройки ÷ 0,863</strong>, результат округляется вниз до шага 2,5 кг. За одну контрольную точку RMref меняется не более чем на ±5 кг; снижение допустимо и не считается неудачей.
+            </p>
+            <label className="block text-xs text-muted-foreground">Вес калибровочной тройки, кг
+              <input name="calibrationTripleKg" type="number" step="1.25" min="20" max="250" required className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-2" />
+            </label>
             <div className="grid grid-cols-2 gap-3">
-              <label className="text-xs text-muted-foreground">Контрольная точка<select name="checkpoint" className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-2"><option value="h2-9">H2-9</option><option value="v9-4">V9-4</option><option value="v9-8">V9-8</option></select></label>
-              <label className="text-xs text-muted-foreground">Новый RMref<input name="proposedRmrefKg" type="number" step="2.5" defaultValue={Number(state?.rmrefKg ?? 115) + 2.5} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-2" /></label>
+              <label className="text-xs text-muted-foreground">Контрольная точка<select name="checkpoint" className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-2">{RMREF_CHECKPOINT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label className="text-xs text-muted-foreground">Итоговый RMref, кг<input name="proposedRmrefKg" type="number" step="2.5" min={Math.max(RMREF_STEP_KG, currentRmrefKg - RMREF_MAX_CHANGE_KG)} max={currentRmrefKg + RMREF_MAX_CHANGE_KG} defaultValue={currentRmrefKg} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-2" /></label>
             </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Допустимый коридор сейчас: {Math.max(RMREF_STEP_KG, currentRmrefKg - RMREF_MAX_CHANGE_KG)}–{currentRmrefKg + RMREF_MAX_CHANGE_KG} кг. Например, тройка 100 кг → {rmrefFromCalibrationTriple(100)} кг.
+            </p>
             {(["first", "second"] as const).map((prefix, index) => (
               <fieldset key={prefix} className="rounded-lg border border-border p-3">
                 <legend className="px-1 text-xs font-semibold">Подтверждение {index + 1}</legend>
@@ -87,6 +130,17 @@ export default async function SettingsPage() {
           </form>
         </details>
         {reviews.length > 0 && <div className="mt-3 space-y-1 text-xs text-muted-foreground">{reviews.slice(0, 3).map((row) => <p key={row.id}>{row.checkpoint}: {row.previousRmrefKg} → {row.proposedRmrefKg} кг · {row.status}</p>)}</div>}
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-border bg-card p-4">
+        <div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 size-5 text-primary" /><div><h2 className="font-bold">Уровень медицинского допуска</h2><p className="text-xs text-muted-foreground">Сейчас: {CLEARANCE_LEVEL_LABEL[clearanceLevel]}</p></div></div>
+        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+          Уровень определяет потолок интенсивности. Минимальная эффективная доза выполняется на всех трёх уровнях, поэтому программа работает и на первом. Уровень выбирается по итогам разговора с врачом, а не самостоятельно.
+        </p>
+        <form action={setClearanceLevel} className="mt-3 grid grid-cols-2 gap-3">
+          <label className="text-xs text-muted-foreground">Уровень допуска<select name="clearanceLevel" defaultValue={clearanceLevel} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-2">{CLEARANCE_LEVELS.map((level) => <option key={level} value={level}>{CLEARANCE_LEVEL_LABEL[level]}</option>)}</select></label>
+          <button className="mt-5 h-11 rounded-lg bg-primary px-3 font-semibold text-primary-foreground">Сохранить уровень</button>
+        </form>
       </section>
 
       <section className="mt-4 rounded-2xl border border-border bg-card p-4">

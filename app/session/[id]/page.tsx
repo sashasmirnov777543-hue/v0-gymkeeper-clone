@@ -17,6 +17,11 @@ import {
 import { SessionLogger } from "@/components/session-logger";
 import { CardioSession } from "@/components/cardio-session";
 import { weightFromRmrefPercent } from "@/lib/program/rmref";
+import {
+  DEFAULT_CLEARANCE_LEVEL,
+  isClearanceLevel,
+  type ClearanceLevel,
+} from "@/lib/program/version";
 
 export const dynamic = "force-dynamic";
 
@@ -122,6 +127,15 @@ export default async function SessionPage({
   );
 
   const rmrefKg = Number(stateRows[0]?.rmrefKg ?? 115);
+  // Колонка допуска может ещё отсутствовать в состоянии программы — читаем мягко.
+  const programStateRow = stateRows[0];
+  const storedClearanceLevel =
+    programStateRow && "clearanceLevel" in programStateRow
+      ? programStateRow.clearanceLevel
+      : undefined;
+  const clearanceLevel: ClearanceLevel = isClearanceLevel(storedClearanceLevel)
+    ? storedClearanceLevel
+    : DEFAULT_CLEARANCE_LEVEL;
   const adaptation =
     session.adaptationPlan && typeof session.adaptationPlan === "object"
       ? (session.adaptationPlan as {
@@ -260,6 +274,7 @@ export default async function SessionPage({
       exercises={exercisesProp}
       initialSets={initialSetsProp}
       lastSetsByName={lastSetsByName}
+      clearanceLevel={clearanceLevel}
     />
   );
 }

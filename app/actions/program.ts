@@ -10,7 +10,8 @@ import {
   rmrefReviewEvents,
 } from "@/lib/db/schema";
 import { requireAuth } from "@/lib/require-auth";
-import { reviewRmrefUpdate } from "@/lib/program/rmref";
+import { reviewRmrefUpdate, rmrefFromCalibrationTriple } from "@/lib/program/rmref";
+import { isClearanceLevel } from "@/lib/program/version";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -109,7 +110,18 @@ export async function addRecoveryDays(form: FormData) {
 export async function reviewAndApplyRmref(form: FormData) {
   await requireAuth();
   const checkpoint = text(form, "checkpoint");
-  const proposedRmrefKg = Number(text(form, "proposedRmrefKg"));
+  // Редакция 2.0: RMref выводится из калибровочной тройки (вес ÷ 0,863, вниз до 2,5 кг).
+  // Явно введённый RMref принимается только как поправка в пределах коридора ±5 кг.
+  const calibrationTripleRaw = form.get("calibrationTripleKg");
+  const calibrationTripleKg =
+    calibrationTripleRaw === null || String(calibrationTripleRaw).trim() === ""
+      ? null
+      : Number(calibrationTripleRaw);
+  const explicitRmref = Number(text(form, "proposedRmrefKg"));
+  const proposedRmrefKg =
+    calibrationTripleKg !== null && Number.isFinite(calibrationTripleKg) && calibrationTripleKg > 0
+      ? rmrefFromCalibrationTriple(calibrationTripleKg)
+      : explicitRmref;
   const firstSessionId = text(form, "firstSessionId");
   const secondSessionId = text(form, "secondSessionId");
   const [state] = await db
@@ -118,6 +130,8 @@ export async function reviewAndApplyRmref(form: FormData) {
     .where(eq(programState.profileKey, "primary"))
     .limit(1);
   const currentRmrefKg = Number(state?.rmrefKg ?? 115);
+  // Стандартизированная тройка сама является подтверждением: она снята
+  // по единому протоколу, поэтому одной сопоставимой калибровки достаточно.
   const evidence = [
     {
       sessionId: firstSessionId,
@@ -159,4 +173,28 @@ export async function reviewAndApplyRmref(form: FormData) {
   });
   revalidatePath("/");
   revalidatePath("/settings");
+}
+
+
+/**
+ * Уровень медицинского допуска редакции 2.0.
+ * Определяет потолок интенсивности и доступность синглов и прямого 1ПМ.
+ * Меняется только по итогам разговора с врачом, а не по самочувствию.
+ */
+export async function setClearanceLevel(form: FormData) {
+  await requireAuth();
+  const value = text(form, "clearanceLevel");
+  if (!isClearanceLevel(value)) {
+    throw new Error("Некорректный уровень допуска");
+  }
+  await db
+    .insert(programState)
+    .values({ profileKey: "primary", clearanceLevel: value })
+    .onConflictDoUpdate({
+      target: programState.profileKey,
+      set: { clearanceLevel: value, updatedAt: new Date() },
+    });
+  revalidatePath("/");
+  revalidatePath("/settings");
+  revalidatePath("/settings/");
 }

@@ -23,6 +23,10 @@ import { HeartRateBadge } from "@/components/heart-rate";
 import { RestTimer } from "@/components/rest-timer";
 import { SessionNotes } from "@/components/session-notes";
 import { SingleGate } from "@/components/single-gate";
+import {
+  DEFAULT_CLEARANCE_LEVEL,
+  type ClearanceLevel,
+} from "@/lib/program/version";
 import { useWakeLock } from "@/lib/heart-rate";
 import { unlockAudio } from "@/lib/sound";
 import {
@@ -142,6 +146,7 @@ export function SessionLogger({
   initialSets,
   lastSetsByName,
   offlineKey,
+  clearanceLevel = DEFAULT_CLEARANCE_LEVEL,
 }: {
   session: {
     id: number;
@@ -159,6 +164,8 @@ export function SessionLogger({
   initialSets: SessionSetRow[];
   lastSetsByName: Record<string, LoggedSetLite[]>;
   offlineKey?: string;
+  /** Уровень допуска редакции 2.0; определяет доступность условных синглов. */
+  clearanceLevel?: ClearanceLevel;
 }) {
   const router = useRouter();
   const [sets, setSets] = useState<SessionSetRow[]>(initialSets);
@@ -276,6 +283,7 @@ export function SessionLogger({
           sessionRef={sessionRef}
           offline={Boolean(offlineKey)}
           readinessLevel={session.readinessLevel}
+          clearanceLevel={clearanceLevel}
           sessionSafetyStopped={session.safetyStopped === true}
           onLogged={(row) =>
             setSets((previous) => {
@@ -370,6 +378,7 @@ function CurrentExercise({
   sessionRef,
   offline,
   readinessLevel,
+  clearanceLevel,
   sessionSafetyStopped,
   onLogged,
   onReplaceId,
@@ -387,6 +396,7 @@ function CurrentExercise({
   sessionRef: number | string;
   offline: boolean;
   readinessLevel?: string | null;
+  clearanceLevel: ClearanceLevel;
   sessionSafetyStopped: boolean;
   onLogged: (row: SessionSetRow) => void;
   onReplaceId: (temporaryId: number, realId: number) => void;
@@ -498,6 +508,7 @@ function CurrentExercise({
         <SingleGate
           sessionId={typeof sessionRef === "number" ? sessionRef : 0}
           offline={offline || typeof sessionRef === "string"}
+          clearanceLevel={clearanceLevel}
           onDecision={setSingleAllowed}
         />
       )}
@@ -790,7 +801,7 @@ function SetForm({
 )}
 
       {(bench || targetRpeMax != null) && (
-  <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 10]} selected={rpe} set={setRpe} />
+  <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]} selected={rpe} set={setRpe} />
 )}
       <ScaleButtons label="Фактический RIR" values={[0, 1, 2, 3, 4, 5]} selected={rir} set={setRir} />
 
@@ -817,7 +828,7 @@ function SetForm({
         </div>
       </fieldset>
       )}
-      <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10      
+      <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10
         <input type="range" min="0" max="10" value={painScore ?? 0} onChange={(event) => setPainScore(Number(event.target.value))} className="mt-2 w-full" />
       </label>
       <div className="space-y-1 rounded-lg border border-destructive/30 p-3">

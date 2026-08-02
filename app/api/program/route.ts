@@ -14,7 +14,7 @@ export async function GET() {
     db
       .select()
       .from(cycles)
-      .where(eq(cycles.programVersion, "h2-v9-1.0"))
+      .where(eq(cycles.programVersion, "h2-v9-2.0"))
       .orderBy(asc(cycles.sortOrder)),
     db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
     db
@@ -76,7 +76,7 @@ export async function GET() {
   }))
 
   return NextResponse.json({
-    programVersion: "h2-v9-1.0",
+    programVersion: "h2-v9-2.0",
     cycles: result,
     lastSetsByName,
   })
