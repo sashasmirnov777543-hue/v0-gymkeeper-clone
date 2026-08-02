@@ -204,9 +204,25 @@ export default async function HomePage() {
               )}
             </div>
           </div>
-          {!activeSession && next && !descriptor.slot.startsWith("P") && (
-            <Link href={`/workout/${next.workout.id}`} className="mt-4 flex min-h-12 items-center justify-center gap-2 rounded-lg bg-primary px-4 font-bold text-primary-foreground">
-              Открыть план сессии <ArrowRight className="size-4" />
+          {/*
+            В дни смен план ближайшей сессии всё равно доступен для просмотра:
+            это половина цикла, и именно тогда удобно прикинуть веса и собрать сумку.
+            Ссылка оформлена второстепенной, чтобы не читаться как призыв тренироваться.
+            Решение «можно ли сегодня грузиться» принимает светофор на самой сессии.
+          */}
+          {!activeSession && next && (
+            <Link
+              href={`/workout/${next.workout.id}`}
+              className={
+                descriptor.slot.startsWith("P")
+                  ? "mt-4 flex min-h-12 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold text-muted-foreground"
+                  : "mt-4 flex min-h-12 items-center justify-center gap-2 rounded-lg bg-primary px-4 font-bold text-primary-foreground"
+              }
+            >
+              {descriptor.slot.startsWith("P")
+                ? "Посмотреть план ближайшей сессии"
+                : "Открыть план сессии"}{" "}
+              <ArrowRight className="size-4" />
             </Link>
           )}
         </section>
@@ -221,10 +237,20 @@ export default async function HomePage() {
               const workout = currentCycleWorkouts.find((item) => item.label === slot);
               const done = workout ? completedWorkoutIds.has(workout.id) : false;
               const current = descriptor.slot === slot;
+              const style = `flex aspect-square items-center justify-center rounded-lg border font-mono text-[11px] font-bold ${current ? "border-primary bg-primary text-primary-foreground" : done ? "border-success/40 bg-success/10 text-success" : "border-border bg-secondary/50 text-muted-foreground"}`;
+              const body = done ? <CheckCircle2 className="size-4" /> : slot;
+              // Дни смен сессии не имеют — они остаются некликабельными.
+              if (!workout) {
+                return (
+                  <div key={slot} className={style} title={`День ${index + 1}`}>
+                    {body}
+                  </div>
+                );
+              }
               return (
-                <div key={slot} className={`flex aspect-square items-center justify-center rounded-lg border font-mono text-[11px] font-bold ${current ? "border-primary bg-primary text-primary-foreground" : done ? "border-success/40 bg-success/10 text-success" : "border-border bg-secondary/50 text-muted-foreground"}`} title={`День ${index + 1}`}>
-                  {done ? <CheckCircle2 className="size-4" /> : slot}
-                </div>
+                <Link key={slot} href={`/workout/${workout.id}`} className={style} title={`День ${index + 1} · открыть план`}>
+                  {body}
+                </Link>
               );
             })}
           </div>
