@@ -61,7 +61,7 @@ npm run db:dry-run
 - `009_h2_v9_v1_schema.sql` is additive: it adds versioned program, readiness, RHR, RMref, safety-gate and coach-audit structures.
 - `010_seed_h2_v9_v1.sql` performs idempotent upserts by stable program keys.
 - Legacy cycles and their session/set history are not deleted.
-- The active UI reads only program version `h2-v9-1.0`.
+- The active UI reads only program version `h2-v9-2.0`.
 
 Before applying migrations to an existing deployment, download a JSON backup and a provider-level database snapshot.
 
@@ -100,3 +100,47 @@ This software implements a training framework, not medical clearance. It does no
 3. Inspect the diff and run the verification commands above.
 4. Commit locally.
 5. Publish the branch or open a pull request only after reviewing migration and environment settings.
+
+## Редакция 2.0 программы
+
+Приложение работает по редакции 2.0 жимовой программы (`lib/program/h2-v9-v2.json`,
+версия `h2-v9-2.0`). Ключевые отличия от редакции 1.0:
+
+| Что | 1.0 | 2.0 |
+|---|---|---|
+| Повторов на весе ≥80% RMref | 51 | 242 |
+| Рабочих сетов ≥80% в неделю (силовой блок) | 1,0–1,5 | 4,5 |
+| Соревновательный жим в зальных днях | 1 из 2 | 2 из 2 |
+| Точек измерения | 3 | 6 |
+| Первый замер | день 68 | день 4 |
+| e1RM | Эпли, вес × 1,10 | вес ÷ 0,863 |
+| Обновление RMref | только +2,5 кг | ±5 кг, снижение разрешено |
+| Целевой RPE калибровок и теста | 7–8 и 8–8,5 | ровно 8 |
+| Условные синглы | V9-6, V9-7, V9-9, V9-11 | V9-8, V9-10, V9-12 |
+| Уровни медицинского допуска | нет | три: 85% / 92,5% / 100% |
+| Поясничный блок для L5–S1 | нет | на каждом кардио-дне |
+
+Структура не изменилась: 176 дней, 22 восьмидневных цикла, 9 циклов гипертрофии (`h2-1…h2-9`)
+и 13 силовых (`v9-1…v9-13`). Календарь пика (T−16 / T−12 / T−8 / T−4 / T0) тоже совпадает
+с редакцией 1.0, поэтому `lib/program/calendar.ts` не менялся.
+
+### Как пересобрать данные программы
+
+```bash
+node scripts/build-program-v2.mjs     # спецификация -> lib/program/h2-v9-v2.json
+node scripts/verify-program-v2.mjs    # 10 групп проверок соответствия программе
+npm run program:generate              # JSON -> migrations/012_seed_h2_v9_v2.sql
+npm run db:migrate                    # применить миграции
+```
+
+`scripts/verify-program-v2.mjs` — основная защита от расхождения кода и программы.
+Он проверяет каркас, шесть контрольных точек, потолок RPE 8, дозу работы ≥80%,
+расположение синглов, календарь пика, наличие жима в обоих зальных днях, конверсии
+процент→килограмм, словарь ролей, который понимает интерфейс, и покрытие гайдами.
+
+### Совместимость с данными редакции 1.0
+
+Уникальные индексы `workouts.program_key` и `workout_exercises.program_key` не версионированы,
+поэтому все ключи редакции 2.0 идут с префиксом `v2:`. Строки редакции 1.0 и вся история
+сессий остаются нетронутыми: миграции только аддитивные, ни одного `DELETE`, `TRUNCATE`
+или `DROP TABLE`.

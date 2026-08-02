@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CONDITIONAL_HEAVY_SINGLE_CYCLES,
+  CONDITIONAL_HEAVY_SINGLE_PLANNED,
   CONDITIONAL_HEAVY_SINGLE_TARGET_RPE,
   V9_13_WARMUP_DELAY_DAYS,
   V9_13_YELLOW_POSTPONE_HOURS,
@@ -19,7 +20,7 @@ import {
 } from "../lib/program/gates.ts";
 
 const greenHeavySingle: ConditionalHeavySingleInput = {
-  cycle: 6,
+  cycle: 8,
   slot: "B2",
   readiness: "green",
   medicalClearanceForPlannedLoadAndStraining: true,
@@ -84,33 +85,33 @@ function directInput(
   } as V913BranchSelectionInput;
 }
 
-test("conditional heavy singles are programmed only in V9-6, V9-7, V9-9 and V9-11", () => {
-  assert.deepEqual(CONDITIONAL_HEAVY_SINGLE_CYCLES, [6, 7, 9, 11]);
+test("conditional heavy singles are programmed only in V9-8, V9-10 and V9-12", () => {
+  assert.deepEqual(CONDITIONAL_HEAVY_SINGLE_CYCLES, [8, 10, 12]);
 
   const b2Locations = Array.from({ length: 13 }, (_, index) => index + 1)
     .filter((cycle) => isConditionalHeavySingleLocation(cycle as V9CycleNumber, "B2"));
-  assert.deepEqual(b2Locations, [6, 7, 9, 11]);
+  assert.deepEqual(b2Locations, [8, 10, 12]);
 
+  // Репетиция 3×1 в V9-11 B4 убрана: синглов нет ни в одном слоте кроме B2.
   for (let cycle = 1; cycle <= 13; cycle += 1) {
-    const expected = cycle === 11;
-    assert.equal(
-      isConditionalHeavySingleLocation(cycle as V9CycleNumber, "B4"),
-      expected,
-      `unexpected B4 result for V9-${cycle}`,
-    );
-    assert.equal(isConditionalHeavySingleLocation(cycle as V9CycleNumber, "B1"), false);
-    assert.equal(isConditionalHeavySingleLocation(cycle as V9CycleNumber, "B3"), false);
+    for (const slot of ["B1", "B3", "B4"] as const) {
+      assert.equal(
+        isConditionalHeavySingleLocation(cycle as V9CycleNumber, slot),
+        false,
+        `unexpected ${slot} result for V9-${cycle}`,
+      );
+    }
   }
 });
 
-test("all green-gated single locations run at expected RPE 6-7 with an absolute cap of 8", () => {
+test("all green-gated single locations run inside the RPE 6-8 band with an absolute cap of 8", () => {
   const locations = [
-    [6, "B2", 1],
-    [7, "B2", 1],
-    [9, "B2", 1],
-    [11, "B2", 1],
-    [11, "B4", 3],
+    [8, "B2", 2],
+    [10, "B2", 3],
+    [12, "B2", 1],
   ] as const;
+
+  assert.deepEqual(CONDITIONAL_HEAVY_SINGLE_PLANNED, { 8: 2, 10: 3, 12: 1 });
 
   for (const [cycle, slot, plannedSingles] of locations) {
     const decision = decideConditionalHeavySingle({
@@ -124,8 +125,15 @@ test("all green-gated single locations run at expected RPE 6-7 with an absolute 
     assert.equal(decision.action, "perform");
     assert.equal(decision.plannedSingles, plannedSingles);
     assert.deepEqual(decision.targetRpe, CONDITIONAL_HEAVY_SINGLE_TARGET_RPE);
-    assert.deepEqual(decision.targetRpe, { min: 6, max: 7, absoluteCap: 8 });
+    assert.deepEqual(decision.targetRpe, { min: 6, max: 8, absoluteCap: 8 });
   }
+
+  // Верхняя граница коридора сдвинулась с 7 на 7,5 и теперь допустима.
+  const atBandCeiling = decideConditionalHeavySingle({
+    ...greenHeavySingle,
+    expectedRpe: 8,
+  });
+  assert.equal(atBandCeiling.allowed, true);
 });
 
 test("a conditional heavy single fails closed at every gate and is never compensated", () => {
@@ -136,7 +144,7 @@ test("a conditional heavy single fails closed at every gate and is never compens
   }> = [
     {
       name: "unprogrammed cycle",
-      patch: { cycle: 8 },
+      patch: { cycle: 11 },
       reason: "location-not-programmed",
     },
     {
@@ -180,14 +188,9 @@ test("a conditional heavy single fails closed at every gate and is never compens
       reason: "warmup-not-safe",
     },
     {
-      name: "expected RPE below target",
+      name: "expected RPE below the target band",
       patch: { expectedRpe: 5.9 },
-      reason: "expected-rpe-outside-6-to-7",
-    },
-    {
-      name: "expected RPE above target but at the cap",
-      patch: { expectedRpe: 8 },
-      reason: "expected-rpe-outside-6-to-7",
+      reason: "expected-rpe-outside-target-band",
     },
     {
       name: "expected RPE exceeds the absolute cap",
@@ -198,6 +201,16 @@ test("a conditional heavy single fails closed at every gate and is never compens
       name: "invalid expected RPE",
       patch: { expectedRpe: Number.NaN },
       reason: "invalid-expected-rpe",
+    },
+    {
+      name: "clearance level 1 never permits singles",
+      patch: { clearanceLevel: "level_1" },
+      reason: "clearance-level-insufficient",
+    },
+    {
+      name: "planned percent above the level 2 ceiling",
+      patch: { clearanceLevel: "level_2", plannedPercentOfRmref: 95 },
+      reason: "planned-percent-above-clearance-ceiling",
     },
   ];
 
@@ -226,6 +239,48 @@ test("spotter or correctly set safeties independently satisfies the single safet
   });
   assert.equal(spotter.allowed, true);
   assert.equal(safeties.allowed, true);
+});
+
+test("the clearance level caps the planned percent and stays optional for older callers", () => {
+  // Уровень 2 — потолок 92,5%, уровень 3 — 100%.
+  const level2AtCeiling = decideConditionalHeavySingle({
+    ...greenHeavySingle,
+    clearanceLevel: "level_2",
+    plannedPercentOfRmref: 92.5,
+  });
+  assert.equal(level2AtCeiling.allowed, true);
+
+  const level2Above = decideConditionalHeavySingle({
+    ...greenHeavySingle,
+    clearanceLevel: "level_2",
+    plannedPercentOfRmref: 92.6,
+  });
+  assert.equal(level2Above.allowed, false);
+  if (level2Above.allowed) throw new Error("92.6% is above the level 2 ceiling");
+  assert.deepEqual(level2Above.reasons, ["planned-percent-above-clearance-ceiling"]);
+
+  const level3 = decideConditionalHeavySingle({
+    ...greenHeavySingle,
+    clearanceLevel: "level_3",
+    plannedPercentOfRmref: 92.6,
+  });
+  assert.equal(level3.allowed, true);
+
+  const level1 = decideConditionalHeavySingle({
+    ...greenHeavySingle,
+    clearanceLevel: "level_1",
+    plannedPercentOfRmref: 80,
+  });
+  assert.equal(level1.allowed, false);
+  if (level1.allowed) throw new Error("level 1 never permits singles");
+  assert.deepEqual(level1.reasons, ["clearance-level-insufficient"]);
+
+  // Без указанного уровня допуска обе проверки пропускаются.
+  const withoutLevel = decideConditionalHeavySingle({
+    ...greenHeavySingle,
+    plannedPercentOfRmref: 200,
+  });
+  assert.equal(withoutLevel.allowed, true);
 });
 
 test("H2-6 removes the fourth cable-fly set on yellow, pain, RPE >8 or technique decline", () => {

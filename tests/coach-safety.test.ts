@@ -41,7 +41,7 @@ test("coach prompt requires explicit confirmation and preserves program invarian
   assert.match(COACH_SYSTEM_PROMPT, /только после явного нажатия «Подтвердить»/i);
   assert.match(
     COACH_SYSTEM_PROMPT,
-    /условные тяжёлые синглы[\s\S]*V9-6[\s\S]*V9-7[\s\S]*V9-9[\s\S]*V9-11/i,
+    /условные тяжёлые синглы[\s\S]*V9-8[\s\S]*V9-10[\s\S]*V9-12/i,
   );
   assert.match(COACH_SYSTEM_PROMPT, /Красный: никакой тренировки/i);
   assert.match(COACH_SYSTEM_PROMPT, /AMRAP[\s\S]*не добавляются/i);
