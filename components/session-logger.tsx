@@ -21,6 +21,10 @@ import { ExerciseGuideButton } from "@/components/exercise-guide-sheet";
 import { ExerciseHistory } from "@/components/exercise-history";
 import { HeartRateBadge } from "@/components/heart-rate";
 import { RestTimer } from "@/components/rest-timer";
+import {
+  suggestCalibrationTripleWeight,
+  type WarmupFeel,
+} from "@/lib/program/rmref";
 import { SessionNotes } from "@/components/session-notes";
 import { SingleGate } from "@/components/single-gate";
 import {
@@ -147,6 +151,8 @@ export function SessionLogger({
   lastSetsByName,
   offlineKey,
   clearanceLevel = DEFAULT_CLEARANCE_LEVEL,
+  rmrefKg = 115,
+  lastStandardTriple = null,
 }: {
   session: {
     id: number;
@@ -166,6 +172,10 @@ export function SessionLogger({
   offlineKey?: string;
   /** Уровень допуска редакции 2.0; определяет доступность условных синглов. */
   clearanceLevel?: ClearanceLevel;
+  /** Текущий RMref — основа подсказки веса первой стандартизированной тройки. */
+  rmrefKg?: number;
+  /** Последняя выполненная калибровочная или тестовая тройка. */
+  lastStandardTriple?: { weightKg: number; rpe: number | null } | null;
 }) {
   const router = useRouter();
   const [sets, setSets] = useState<SessionSetRow[]>(initialSets);
@@ -279,6 +289,8 @@ export function SessionLogger({
           total={exercises.length}
           doneSets={setsByExercise[current.id] ?? []}
           lastTimeSets={lastSetsByName[current.name] ?? []}
+          rmrefKg={rmrefKg}
+          lastStandardTriple={lastStandardTriple}
           readOnly={readOnly}
           sessionRef={sessionRef}
           offline={Boolean(offlineKey)}
@@ -374,6 +386,8 @@ function CurrentExercise({
   total,
   doneSets,
   lastTimeSets,
+  rmrefKg,
+  lastStandardTriple,
   readOnly,
   sessionRef,
   offline,
@@ -392,6 +406,8 @@ function CurrentExercise({
   total: number;
   doneSets: SessionSetRow[];
   lastTimeSets: LoggedSetLite[];
+  rmrefKg: number;
+  lastStandardTriple: { weightKg: number; rpe: number | null } | null;
   readOnly: boolean;
   sessionRef: number | string;
   offline: boolean;
@@ -460,6 +476,21 @@ function CurrentExercise({
     technicalDecision.action === "stop_all" ||
     technicalDecision.action === "stop_primary" ||
     (conditionalSingle && !singleAllowed);
+  // Стандартизированная тройка не имеет процента от RMref: её вес подбирается.
+  // Считаем подсказку сами, чтобы не оставлять поле пустым.
+  const isStandardTriple =
+    exercise.role === "calibration" || exercise.role === "test_triple";
+  const [warmupFeel, setWarmupFeel] = useState<WarmupFeel>("normal");
+  const calibrationSuggestion = isStandardTriple
+    ? suggestCalibrationTripleWeight({
+        rmrefKg,
+        previous: lastStandardTriple
+          ? { weightKg: lastStandardTriple.weightKg, rpe: lastStandardTriple.rpe }
+          : null,
+        warmupFeel,
+      })
+    : null;
+
   const targetSets = parseFirstInt(exercise.targetSets);
   const allSetsDone = targetSets != null && doneSets.length >= targetSets;
   const hasTargets = Boolean(exercise.weightText || exercise.targetReps);
@@ -614,11 +645,41 @@ function CurrentExercise({
 
       {hasTargets && !offline && <ExerciseHistory exerciseName={exercise.name} />}
 
+      {!readOnly && !loggingBlocked && calibrationSuggestion && (
+        <section className="rounded-xl border border-primary/40 bg-primary/5 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">Подсказка веса</p>
+          <p className="mt-1 font-mono text-2xl font-bold">{calibrationSuggestion.weightKg} кг</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {calibrationSuggestion.explanation}. Вес уже подставлен в поле ниже — поправьте, если разминка
+            говорит другое.
+          </p>
+          <fieldset className="mt-3">
+            <legend className="text-xs text-muted-foreground">Как прошла разминка</legend>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {([
+                ["easy", "Легко"],
+                ["normal", "Обычно"],
+                ["hard", "Тяжело"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setWarmupFeel(value)}
+                  className={`min-h-11 rounded-md border text-xs font-semibold ${warmupFeel === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        </section>
+      )}
+
       {!readOnly && !loggingBlocked && (
         <SetForm
-          key={doneSets.length}
+          key={`${doneSets.length}:${calibrationSuggestion?.weightKg ?? ""}`}
           bench={isBenchExercise(exercise)}
-          defaultWeight={recommendation?.weight ?? prescribed}
+          defaultWeight={calibrationSuggestion?.weightKg ?? recommendation?.weight ?? prescribed}
           targetRirMin={exercise.targetRirMin}
           targetRpeMax={exercise.targetRpeMax ?? null}
           targetReps={exercise.targetReps}

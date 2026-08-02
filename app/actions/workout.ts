@@ -559,3 +559,36 @@ export async function getExerciseHistory(name: string, limit = 6) {
     .reverse()
     .map((id) => bySession.get(id)!);
 }
+
+
+/**
+ * Последняя выполненная стандартизированная тройка — калибровочная или тестовая.
+ *
+ * Ищется по роли, а не по названию: тестовая тройка в Ц22 должна опираться
+ * на калибровку Ц20, у которой другое название упражнения.
+ */
+export async function getLastStandardTriple(): Promise<{
+  weightKg: number;
+  rpe: number | null;
+} | null> {
+  const [row] = await db
+    .select({
+      weight: loggedSets.weight,
+      rpe: loggedSets.rpe,
+    })
+    .from(loggedSets)
+    .innerJoin(workoutExercises, eq(loggedSets.workoutExerciseId, workoutExercises.id))
+    .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
+    .where(
+      and(
+        eq(sessions.status, "completed"),
+        inArray(workoutExercises.role, ["calibration", "test_triple"]),
+      ),
+    )
+    .orderBy(desc(sessions.startedAt), desc(loggedSets.id))
+    .limit(1);
+  if (!row?.weight) return null;
+  const weightKg = Number.parseFloat(row.weight);
+  if (!Number.isFinite(weightKg) || weightKg <= 0) return null;
+  return { weightKg, rpe: row.rpe != null ? Number(row.rpe) : null };
+}
