@@ -2,7 +2,24 @@ import type { NumericRange } from "./types.ts";
 
 export const DEFAULT_RMREF_KG = 115;
 export const DEFAULT_WEIGHT_STEP_KG = 2.5;
-export const RMREF_CHECKPOINTS = ["h2-9", "v9-4", "v9-8"] as const;
+/**
+ * Редакция 2.0: шесть точек измерения вместо трёх.
+ * Ц1 (h2-1) — базовый замер, Ц5 (h2-5), Ц9 (h2-9), Ц14 (v9-5), Ц20 (v9-11), Ц22 (v9-13) — тест.
+ */
+export const RMREF_CHECKPOINTS = [
+  "h2-1",
+  "h2-5",
+  "h2-9",
+  "v9-5",
+  "v9-11",
+  "v9-13",
+] as const;
+
+/** Коэффициент пересчёта тройки @RPE 8 в 1ПМ по таблице RPE. */
+export const STANDARD_TRIPLE_RPE8_FACTOR = 0.863;
+
+/** Максимальное изменение RMref за одну контрольную точку, в любую сторону. */
+export const RMREF_MAX_STEP_KG = 5;
 export type RmrefCheckpoint = (typeof RMREF_CHECKPOINTS)[number];
 
 const EPSILON = 1e-9;
@@ -55,11 +72,30 @@ export function weightRangeFromRmref(
   };
 }
 
+/**
+ * e1RM стандартизированной тройки @RPE 8.
+ *
+ * Редакция 2.0 отказалась от формулы Эпли (вес × 1,10): она выведена на подходах
+ * до отказа и занижает результат тройки @RPE 8 примерно на 5%. Тройка @RPE 8 —
+ * это около 86,3% от 1ПМ по таблице RPE, поэтому пересчёт идёт делением.
+ */
 export function e1rmFromStandardTriple(weightKg: number): number {
   if (!Number.isFinite(weightKg) || weightKg <= 0) {
     throw new RangeError("triple weight must be positive");
   }
-  return Number((weightKg * 1.1).toFixed(4));
+  return Number((weightKg / STANDARD_TRIPLE_RPE8_FACTOR).toFixed(4));
+}
+
+/**
+ * RMref, выведенный из калибровочной тройки: вес ÷ 0,863, вниз до шага 2,5 кг.
+ * Округление вниз намеренное — RMref не должен опережать подтверждённую способность.
+ */
+export function rmrefFromCalibrationTriple(
+  tripleWeightKg: number,
+  step: number = DEFAULT_WEIGHT_STEP_KG,
+): number {
+  const raw = e1rmFromStandardTriple(tripleWeightKg);
+  return Number((Math.floor((raw + EPSILON) / step) * step).toFixed(4));
 }
 
 export type RmrefEvidence = Readonly<{
@@ -95,12 +131,20 @@ export function reviewRmrefUpdate(input: RmrefReviewInput): RmrefReviewDecision 
     reasons.push("invalid-proposed-rmref");
   }
   const delta = input.proposedRmrefKg - input.currentRmrefKg;
-  if (delta < 0) reasons.push("automatic-decrease-not-permitted");
-  if (delta > 2.5 + EPSILON) reasons.push("increase-exceeds-2.5-kg");
-  if (delta > EPSILON && Math.abs(delta - 2.5) > EPSILON) {
-    reasons.push("increase-must-use-2.5-kg-step");
+  // Редакция 2.0: снижение разрешено наравне с повышением. Коридор ±5 кг за точку.
+  if (Math.abs(delta) > RMREF_MAX_STEP_KG + EPSILON) {
+    reasons.push("change-exceeds-5-kg");
+  }
+  if (
+    Math.abs(delta) > EPSILON &&
+    Math.abs(delta - roundToStepHalfDown(delta)) > EPSILON
+  ) {
+    reasons.push("change-must-use-2.5-kg-step");
   }
 
+  // Подтверждением служит сама стандартизированная тройка: она снята по единому
+  // протоколу (одна пауза, точка касания, RPE 8, видео). Правило «двух сопоставимых
+  // подтверждений» редакции 1.0 было нужно, пока RMref угадывался.
   const distinctEvidence = new Map(
     input.evidence.map((item) => [String(item.sessionId), item]),
   );
@@ -111,8 +155,8 @@ export function reviewRmrefUpdate(input: RmrefReviewInput): RmrefReviewDecision 
       item.comparableTouchPoint &&
       item.improvementConfirmed,
   );
-  if (delta > EPSILON && confirmations.length < 2) {
-    reasons.push("two-comparable-confirmations-required");
+  if (Math.abs(delta) > EPSILON && confirmations.length < 1) {
+    reasons.push("comparable-calibration-required");
   }
 
   return {

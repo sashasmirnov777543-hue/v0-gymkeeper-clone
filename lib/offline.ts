@@ -5,8 +5,23 @@ import type { LoggedSetLite } from "./recommend.ts";
 import type { ReadinessInput } from "./readiness.ts";
 import { dedupeOperationsById } from "./offline-dedup.ts";
 
-const PROGRAM_KEY = "gym:program:h2-v9-1.0";
-const ACTIVE_PROGRAM_VERSION = "h2-v9-1.0";
+// Ключ кэша включает версию: клиенты со старой программой не подхватят чужие данные.
+const PROGRAM_KEY = "gym:program:h2-v9-2.0";
+const ACTIVE_PROGRAM_VERSION = "h2-v9-2.0";
+/** Кэши прошлых редакций: удаляются при первом обращении к программе. */
+const STALE_PROGRAM_KEYS = ["gym:program:h2-v9-1.0"];
+
+/** Убирает кэш прошлых редакций, чтобы клиент не показывал устаревший план. */
+function purgeStaleProgramCaches(): void {
+  if (typeof localStorage === "undefined") return;
+  for (const key of STALE_PROGRAM_KEYS) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // приватный режим или переполненное хранилище — не критично
+    }
+  }
+}
 const OUTBOX_KEY = "gym:outbox";
 const LOCAL_SESSIONS_KEY = "gym:local-sessions";
 const LOCAL_SETS_PREFIX = "gym:local-sets:";
@@ -159,6 +174,7 @@ export function cacheProgram(data: Omit<ProgramCache, "cachedAt">) {
 }
 
 export function loadProgram(): ProgramCache | null {
+  purgeStaleProgramCaches();
   try {
     const raw = localStorage.getItem(PROGRAM_KEY);
     if (!raw) return null;

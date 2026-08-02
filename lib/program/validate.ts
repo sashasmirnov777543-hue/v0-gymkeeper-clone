@@ -14,13 +14,18 @@ const EXPECTED_DAYS: Record<WorkoutSlot, 3 | 4 | 7 | 8> = {
   B3: 7,
   B4: 8,
 };
-const CHECKPOINT_CYCLES = new Set(["h2-9", "v9-4", "v9-8", "v9-13"]);
-const SINGLE_LOCATIONS = new Set([
-  "v9-6-b2",
-  "v9-7-b2",
-  "v9-9-b2",
-  "v9-11-b2",
-  "v9-11-b4",
+// Редакция 2.0: шесть точек измерения (Ц1, Ц5, Ц9, Ц14, Ц20 и тест Ц22).
+const CHECKPOINT_CYCLES = new Set(["h2-1", "h2-5", "h2-9", "v9-5", "v9-11", "v9-13"]);
+// Редакция 2.0: условные синглы только в B2 циклов V9-8, V9-10 и V9-12.
+const SINGLE_LOCATIONS = new Set(["v9-8-b2", "v9-10-b2", "v9-12-b2"]);
+// Роли, которые считаются соревновательным жимом при проверке «жим в обоих зальных днях».
+const BENCH_ROLES = new Set([
+  "primary_bench",
+  "primary_backoff",
+  "calibration",
+  "test_triple",
+  "technique_press",
+  "primer_single",
 ]);
 
 function validateRange(
@@ -69,7 +74,7 @@ export function validateProgram(program: ProgramDefinition): ProgramValidationRe
   let workoutCount = 0;
   let exerciseCount = 0;
 
-  if (program.version !== "h2-v9-1.0") errors.push("Unexpected program version");
+  if (program.version !== "h2-v9-2.0") errors.push("Unexpected program version");
   if (program.durationDays !== 176) errors.push("Program must contain 176 days");
   if (program.cycleLengthDays !== 8) errors.push("Cycle length must be 8 days");
   if (program.defaultRmrefKg !== 115) errors.push("Default RMref must be 115 kg");
@@ -108,11 +113,9 @@ export function validateProgram(program: ProgramDefinition): ProgramValidationRe
       }
       if (
         workout.kind === "cardio" &&
-        workout.exercises.some(
-          (exercise) => exercise.role !== "rehab" || !exercise.optional,
-        )
+        workout.exercises.some((exercise) => exercise.role !== "rehab")
       ) {
-        errors.push(`${workout.id}: cardio may contain only optional rehab work`);
+        errors.push(`${workout.id}: cardio may contain only rehab work`);
       }
       if (workout.kind === "strength" && workout.cardio !== null) {
         errors.push(`${workout.id}: strength workout must not contain cardio prescription`);
@@ -147,35 +150,54 @@ export function validateProgram(program: ProgramDefinition): ProgramValidationRe
     }
   }
 
-  const h25 = getCycle(program, "h2-5");
-  const h25b2 = h25?.workouts.find((workout) => workout.slot === "B2");
-  const h25b4 = h25?.workouts.find((workout) => workout.slot === "B4");
-  if (h25b2?.exercises.length !== 5 || h25b4?.exercises.length !== 5) {
-    errors.push("H2-5 must use the full-deload 5 + 5 exercise structure");
+  // Редакция 2.0: соревновательный жим присутствует в обоих зальных днях КАЖДОГО цикла.
+  for (const cycle of program.cycles) {
+    for (const slot of ["B2", "B4"] as const) {
+      const workout = cycle.workouts.find((item) => item.slot === slot);
+      const hasBench = workout?.exercises.some((exercise) =>
+        BENCH_ROLES.has(exercise.role),
+      );
+      if (!hasBench) {
+        errors.push(`${cycle.id} ${slot}: missing competition bench work`);
+      }
+    }
   }
 
-  const v910 = getCycle(program, "v9-10");
-  const mandatoryBenchSets = (v910?.workouts ?? []).flatMap((workout) =>
-    workout.exercises.filter(
-      (exercise) =>
-        !exercise.optional &&
-        exercise.role.includes("primary") &&
-        /жим|bench/i.test(exercise.name),
-    ),
-  );
-  const mandatorySetTotal = mandatoryBenchSets.reduce(
-    (sum, exercise) => sum + (fixedSetCount(exercise.sets) ?? 0),
-    0,
-  );
-  if (mandatorySetTotal !== 4) {
-    errors.push(`V9-10 must contain exactly 4 mandatory bench sets, found ${mandatorySetTotal}`);
+  // Все шесть точек измерения снимаются одним протоколом: ровно RPE 8.
+  for (const cycle of program.cycles) {
+    for (const workout of cycle.workouts) {
+      for (const exercise of workout.exercises) {
+        if (exercise.role !== "calibration" && exercise.role !== "test_triple") continue;
+        if (exercise.reps !== "3") {
+          errors.push(`${exercise.id}: standardized measurement must be a triple`);
+        }
+        if (exercise.targetRpe?.min !== 8 || exercise.targetRpe?.max !== 8) {
+          errors.push(`${exercise.id}: standardized measurement must target exactly RPE 8`);
+        }
+      }
+    }
   }
 
-  const v912 = getCycle(program, "v9-12");
-  if (
-    v912?.workouts.some((workout) => workout.exercises.some(isConditionalHeavySingle))
-  ) {
-    errors.push("V9-12 must not contain a conditional heavy single");
+  // Никакой плановый подход не выходит за RPE 8.
+  for (const cycle of program.cycles) {
+    for (const workout of cycle.workouts) {
+      for (const exercise of workout.exercises) {
+        if (exercise.targetRpe && exercise.targetRpe.max !== null && exercise.targetRpe.max > 8) {
+          errors.push(`${exercise.id}: planned RPE ${exercise.targetRpe.max} exceeds the RPE 8 ceiling`);
+        }
+      }
+    }
+  }
+
+  // Ни один плановый вес не превышает потолок самого высокого уровня допуска.
+  for (const cycle of program.cycles) {
+    for (const workout of cycle.workouts) {
+      for (const exercise of workout.exercises) {
+        if (exercise.percent?.max != null && exercise.percent.max > 100) {
+          errors.push(`${exercise.id}: percent above 100% RMref`);
+        }
+      }
+    }
   }
 
   const v913b2 = getCycle(program, "v9-13")?.workouts.find(

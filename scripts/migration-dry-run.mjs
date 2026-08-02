@@ -81,7 +81,7 @@ async function verifyCanonicalCounts(db) {
   const state = await db.query(
     "SELECT program_version, current_program_day, rmref_kg::float8 AS rmref FROM program_state WHERE profile_key='primary'",
   );
-  assert(state.rows[0]?.program_version === "h2-v9-1.0", "program_state version mismatch");
+  assert(state.rows[0]?.program_version === "h2-v9-2.0", "program_state version mismatch");
   assert(Number(state.rows[0]?.current_program_day) === 1, "program_state day mismatch");
   assert(Number(state.rows[0]?.rmref) === 115, "program_state RMref mismatch");
   return { cycles, workouts, exercises };

@@ -1,6 +1,7 @@
 export type ProgramBlock = "h2" | "v9";
 export type WorkoutSlot = "B1" | "B2" | "B3" | "B4";
 export type WorkoutKind = "cardio" | "strength";
+export type ClearanceLevelId = "level_1" | "level_2" | "level_3";
 
 export type NumericRange = Readonly<{
   min: number | null;
@@ -86,7 +87,7 @@ export type ProgramCycle = Readonly<{
 }>;
 
 export type ProgramDefinition = Readonly<{
-  version: "h2-v9-1.0";
+  version: "h2-v9-2.0";
   source: Readonly<{
     title: string;
     revision: string;
@@ -97,6 +98,13 @@ export type ProgramDefinition = Readonly<{
   cycleLengthDays: 8;
   defaultRmrefKg: 115;
   workoutSlots: Readonly<Record<WorkoutSlot, 3 | 4 | 7 | 8>>;
+  clearanceLevels?: readonly Readonly<{
+    id: string;
+    name: string;
+    ceilingPercent: number;
+    singlesAllowed: boolean;
+    directOneRmAllowed: boolean;
+  }>[];
   cycles: readonly ProgramCycle[];
 }>;
 
