@@ -25,6 +25,7 @@ import {
   suggestCalibrationTripleWeight,
   type WarmupFeel,
 } from "@/lib/program/rmref";
+import { LAST_REP_OBSERVATIONS, observationFromRpe } from "@/lib/effort";
 import { SessionNotes } from "@/components/session-notes";
 import { SingleGate } from "@/components/single-gate";
 import {
@@ -799,6 +800,8 @@ function SetForm({
   const [unsafeLossOfControl, setUnsafeLossOfControl] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   const [saving, setSaving] = useState(false);
+  // Числовая шкала RPE спрятана по умолчанию: основной ввод — наблюдаемое событие.
+  const [showNumericRpe, setShowNumericRpe] = useState(false);
 
   const bump = (delta: number) => {
     const current = Number.parseFloat(weight.replace(",", ".")) || 0;
@@ -880,19 +883,62 @@ function SetForm({
 )}
 
       {(bench || targetRpeMax != null) && (
-        <ScaleButtons
-          label={canQuickSave ? "Фактический RPE — касание записывает подход" : "Фактический RPE"}
-          values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]}
-          selected={rpe}
-          set={setRpe}
-          quickSave={canQuickSave ? (value) => { setRpe(value); void commit({ rpe: value }); } : undefined}
-        />
+        <fieldset>
+          <legend className="text-xs text-muted-foreground">
+            Последний повтор{canQuickSave ? " — касание записывает подход" : ""}
+          </legend>
+          <div className="mt-1.5 grid gap-1.5">
+            {LAST_REP_OBSERVATIONS.map((option) => {
+              const selected = observationFromRpe(rpe) === option.id;
+              const isTarget = targetRpeMax != null && observationFromRpe(targetRpeMax) === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    setRpe(option.rpe);
+                    setVelocity(option.velocity);
+                    if (canQuickSave) void commit({ rpe: option.rpe });
+                  }}
+                  className={`flex min-h-12 items-center justify-between gap-2 rounded-lg border px-3 text-left ${selected ? "border-primary bg-primary text-primary-foreground" : isTarget ? "border-primary/50" : "border-border"}`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold">{option.label}</span>
+                    <span className={`block text-[11px] ${selected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                      {option.hint}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] opacity-70">
+                    {isTarget ? "цель · " : ""}RPE {String(option.rpe).replace(".", ",")}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowNumericRpe((value) => !value)}
+            className="mt-2 text-[11px] text-muted-foreground underline underline-offset-2"
+          >
+            {showNumericRpe ? "Скрыть числовую шкалу" : "Указать RPE числом"}
+          </button>
+          {showNumericRpe && (
+            <div className="mt-1.5">
+              <ScaleButtons
+                label="Фактический RPE"
+                values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]}
+                selected={rpe}
+                set={setRpe}
+              />
+            </div>
+          )}
+        </fieldset>
       )}
       <ScaleButtons
         label={
           canQuickSave && !(bench || targetRpeMax != null)
-            ? "Фактический RIR — касание записывает подход"
-            : "Фактический RIR"
+            ? "Сколько ещё повторов смог бы с той же техникой — касание записывает подход"
+            : "Сколько ещё повторов смог бы с той же техникой"
         }
         values={[0, 1, 2, 3, 4, 5]}
         selected={rir}
