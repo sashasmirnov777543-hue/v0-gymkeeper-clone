@@ -17,6 +17,7 @@ import {
 import { SessionLogger } from "@/components/session-logger";
 import { CardioSession } from "@/components/cardio-session";
 import { weightFromRmrefPercent } from "@/lib/program/rmref";
+import { getLastStandardTriple } from "@/app/actions/workout";
 import {
   DEFAULT_CLEARANCE_LEVEL,
   isClearanceLevel,
@@ -127,6 +128,11 @@ export default async function SessionPage({
   );
 
   const rmrefKg = Number(stateRows[0]?.rmrefKg ?? 115);
+  // Нужна только там, где в сессии есть стандартизированная тройка.
+  const hasStandardTriple = exercises.some(
+    (item) => item.role === "calibration" || item.role === "test_triple",
+  );
+  const lastStandardTriple = hasStandardTriple ? await getLastStandardTriple() : null;
   // Колонка допуска может ещё отсутствовать в состоянии программы — читаем мягко.
   const programStateRow = stateRows[0];
   const storedClearanceLevel =
@@ -275,6 +281,8 @@ export default async function SessionPage({
       initialSets={initialSetsProp}
       lastSetsByName={lastSetsByName}
       clearanceLevel={clearanceLevel}
+      rmrefKg={rmrefKg}
+      lastStandardTriple={lastStandardTriple}
     />
   );
 }

@@ -165,3 +165,83 @@ export function reviewRmrefUpdate(input: RmrefReviewInput): RmrefReviewDecision 
     reasons,
   };
 }
+
+
+/** Доля 1ПМ для тройки по таблице RPE. Основа пересчёта калибровок к общей шкале. */
+export const TRIPLE_PERCENT_BY_RPE: Readonly<Record<string, number>> = {
+  "6": 0.811,
+  "6.5": 0.824,
+  "7": 0.837,
+  "7.5": 0.85,
+  "8": 0.863,
+  "8.5": 0.878,
+  "9": 0.892,
+  "9.5": 0.907,
+  "10": 0.922,
+};
+
+/** Как прошла разминка. Правило программы: отлично +2,5 кг, обычно без изменений, тяжело −2,5 кг. */
+export type WarmupFeel = "easy" | "normal" | "hard";
+
+export type CalibrationSuggestion = Readonly<{
+  weightKg: number;
+  basis: "previous_calibration" | "rmref";
+  explanation: string;
+}>;
+
+/**
+ * Подсказка веса стандартизированной тройки.
+ *
+ * Логировать разминку для этого не нужно: если предыдущая калибровка есть, вес берётся
+ * от неё и приводится к RPE 8 по таблице; если это первый замер — считается от RMref
+ * как 86,3% (доля 1ПМ для тройки на RPE 8).
+ *
+ * Округление вниз намеренное. Недобрать не страшно: фактический RPE записывается
+ * и пересчитывается. Перебрать хуже — гриндер на втором повторе прекращает подход
+ * и теряет точку измерения.
+ */
+export function suggestCalibrationTripleWeight(input: {
+  rmrefKg: number;
+  previous?: Readonly<{ weightKg: number; rpe?: number | null }> | null;
+  warmupFeel?: WarmupFeel;
+  step?: number;
+}): CalibrationSuggestion | null {
+  const step = input.step ?? DEFAULT_WEIGHT_STEP_KG;
+  const shift =
+    input.warmupFeel === "easy" ? step : input.warmupFeel === "hard" ? -step : 0;
+  const floorToStep = (value: number) =>
+    Number((Math.floor((value + EPSILON) / step) * step).toFixed(4));
+
+  const previousWeight = input.previous?.weightKg;
+  if (typeof previousWeight === "number" && Number.isFinite(previousWeight) && previousWeight > 0) {
+    const rpe = input.previous?.rpe;
+    const percent =
+      rpe != null && Number.isFinite(rpe)
+        ? TRIPLE_PERCENT_BY_RPE[String(rpe)]
+        : undefined;
+    // Прошлая тройка приводится к эквиваленту RPE 8, если фактический RPE отличался.
+    const normalised = percent ? (previousWeight * TRIPLE_PERCENT_BY_RPE["8"]) / percent : previousWeight;
+    const weightKg = Math.max(step, floorToStep(normalised) + shift);
+    const note =
+      percent && Math.abs(percent - TRIPLE_PERCENT_BY_RPE["8"]) > 1e-9
+        ? `прошлая тройка ${previousWeight} кг на RPE ${rpe}, это эквивалент ${floorToStep(normalised)} кг на RPE 8`
+        : `прошлая тройка ${previousWeight} кг на RPE 8`;
+    return {
+      weightKg,
+      basis: "previous_calibration",
+      explanation: shift === 0 ? note : `${note}; разминка ${shift > 0 ? "лёгкая, +" : "тяжёлая, −"}${step} кг`,
+    };
+  }
+
+  if (!Number.isFinite(input.rmrefKg) || input.rmrefKg <= 0) return null;
+  const base = floorToStep(input.rmrefKg * TRIPLE_PERCENT_BY_RPE["8"]);
+  const weightKg = Math.max(step, base + shift);
+  return {
+    weightKg,
+    basis: "rmref",
+    explanation:
+      shift === 0
+        ? `первый замер: 86,3% от RMref ${input.rmrefKg} кг, округлено вниз`
+        : `первый замер: 86,3% от RMref ${input.rmrefKg} кг; разминка ${shift > 0 ? "лёгкая, +" : "тяжёлая, −"}${step} кг`,
+  };
+}

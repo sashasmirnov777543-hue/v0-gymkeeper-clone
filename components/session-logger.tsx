@@ -21,6 +21,11 @@ import { ExerciseGuideButton } from "@/components/exercise-guide-sheet";
 import { ExerciseHistory } from "@/components/exercise-history";
 import { HeartRateBadge } from "@/components/heart-rate";
 import { RestTimer } from "@/components/rest-timer";
+import {
+  suggestCalibrationTripleWeight,
+  type WarmupFeel,
+} from "@/lib/program/rmref";
+import { LAST_REP_OBSERVATIONS, observationFromRpe } from "@/lib/effort";
 import { SessionNotes } from "@/components/session-notes";
 import { SingleGate } from "@/components/single-gate";
 import {
@@ -147,6 +152,8 @@ export function SessionLogger({
   lastSetsByName,
   offlineKey,
   clearanceLevel = DEFAULT_CLEARANCE_LEVEL,
+  rmrefKg = 115,
+  lastStandardTriple = null,
 }: {
   session: {
     id: number;
@@ -166,6 +173,10 @@ export function SessionLogger({
   offlineKey?: string;
   /** Уровень допуска редакции 2.0; определяет доступность условных синглов. */
   clearanceLevel?: ClearanceLevel;
+  /** Текущий RMref — основа подсказки веса первой стандартизированной тройки. */
+  rmrefKg?: number;
+  /** Последняя выполненная калибровочная или тестовая тройка. */
+  lastStandardTriple?: { weightKg: number; rpe: number | null } | null;
 }) {
   const router = useRouter();
   const [sets, setSets] = useState<SessionSetRow[]>(initialSets);
@@ -279,6 +290,8 @@ export function SessionLogger({
           total={exercises.length}
           doneSets={setsByExercise[current.id] ?? []}
           lastTimeSets={lastSetsByName[current.name] ?? []}
+          rmrefKg={rmrefKg}
+          lastStandardTriple={lastStandardTriple}
           readOnly={readOnly}
           sessionRef={sessionRef}
           offline={Boolean(offlineKey)}
@@ -374,6 +387,8 @@ function CurrentExercise({
   total,
   doneSets,
   lastTimeSets,
+  rmrefKg,
+  lastStandardTriple,
   readOnly,
   sessionRef,
   offline,
@@ -392,6 +407,8 @@ function CurrentExercise({
   total: number;
   doneSets: SessionSetRow[];
   lastTimeSets: LoggedSetLite[];
+  rmrefKg: number;
+  lastStandardTriple: { weightKg: number; rpe: number | null } | null;
   readOnly: boolean;
   sessionRef: number | string;
   offline: boolean;
@@ -460,6 +477,21 @@ function CurrentExercise({
     technicalDecision.action === "stop_all" ||
     technicalDecision.action === "stop_primary" ||
     (conditionalSingle && !singleAllowed);
+  // Стандартизированная тройка не имеет процента от RMref: её вес подбирается.
+  // Считаем подсказку сами, чтобы не оставлять поле пустым.
+  const isStandardTriple =
+    exercise.role === "calibration" || exercise.role === "test_triple";
+  const [warmupFeel, setWarmupFeel] = useState<WarmupFeel>("normal");
+  const calibrationSuggestion = isStandardTriple
+    ? suggestCalibrationTripleWeight({
+        rmrefKg,
+        previous: lastStandardTriple
+          ? { weightKg: lastStandardTriple.weightKg, rpe: lastStandardTriple.rpe }
+          : null,
+        warmupFeel,
+      })
+    : null;
+
   const targetSets = parseFirstInt(exercise.targetSets);
   const allSetsDone = targetSets != null && doneSets.length >= targetSets;
   const hasTargets = Boolean(exercise.weightText || exercise.targetReps);
@@ -614,11 +646,41 @@ function CurrentExercise({
 
       {hasTargets && !offline && <ExerciseHistory exerciseName={exercise.name} />}
 
+      {!readOnly && !loggingBlocked && calibrationSuggestion && (
+        <section className="rounded-xl border border-primary/40 bg-primary/5 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">Подсказка веса</p>
+          <p className="mt-1 font-mono text-2xl font-bold">{calibrationSuggestion.weightKg} кг</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {calibrationSuggestion.explanation}. Вес уже подставлен в поле ниже — поправьте, если разминка
+            говорит другое.
+          </p>
+          <fieldset className="mt-3">
+            <legend className="text-xs text-muted-foreground">Как прошла разминка</legend>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {([
+                ["easy", "Легко"],
+                ["normal", "Обычно"],
+                ["hard", "Тяжело"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setWarmupFeel(value)}
+                  className={`min-h-11 rounded-md border text-xs font-semibold ${warmupFeel === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        </section>
+      )}
+
       {!readOnly && !loggingBlocked && (
         <SetForm
-          key={doneSets.length}
+          key={`${doneSets.length}:${calibrationSuggestion?.weightKg ?? ""}`}
           bench={isBenchExercise(exercise)}
-          defaultWeight={recommendation?.weight ?? prescribed}
+          defaultWeight={calibrationSuggestion?.weightKg ?? recommendation?.weight ?? prescribed}
           targetRirMin={exercise.targetRirMin}
           targetRpeMax={exercise.targetRpeMax ?? null}
           targetReps={exercise.targetReps}
@@ -638,6 +700,11 @@ function CurrentExercise({
               symptoms,
             };
             onLogged(row);
+            // Последний плановый подход упражнения — сами открываем следующее.
+            // Задержка даёт увидеть, что подход записан; таймер отдыха идёт поверх.
+            if (targetSets != null && setNumber >= targetSets && onAdvance) {
+              setTimeout(onAdvance, 900);
+            }
             if (exercise.restSeconds && exercise.restSeconds > 0) {
               const nextRecommendation = recommendWeight(
                 [...doneSets.map((set) => ({ weight: set.weight, reps: set.reps, rir: set.rir })), draft],
@@ -712,7 +779,12 @@ function SetForm({
   onSubmit: (draft: SetDraft) => Promise<void>;
 }) {
   const [weight, setWeight] = useState(defaultWeight != null ? String(defaultWeight) : "");
-  const [reps, setReps] = useState("");
+  // Повторы предзаполняются из цели: для точного числа — им, для диапазона — нижней
+  // границей (верх диапазона надо заработать). Фишки рядом позволяют поправить в один тап.
+  const [reps, setReps] = useState(() => {
+    const nums = (targetReps ?? "").match(/\d+/g)?.map(Number) ?? [];
+    return nums.length ? String(Math.min(...nums)) : "";
+  });
   const [rir, setRir] = useState<number | null>(targetRirMin);
   const [rpe, setRpe] = useState<number | null>(targetRpeMax);
   const [velocity, setVelocity] = useState<"fast" | "normal" | "slow">("normal");
@@ -728,6 +800,31 @@ function SetForm({
   const [unsafeLossOfControl, setUnsafeLossOfControl] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   const [saving, setSaving] = useState(false);
+  // Числовая шкала RPE спрятана по умолчанию: основной ввод — наблюдаемое событие.
+  const [showNumericRpe, setShowNumericRpe] = useState(false);
+  // Блок отклонений свёрнут: обычный подход проходит без единого отклонения,
+  // а разворачивать его нужно только когда что-то действительно пошло не так.
+  const [showDeviations, setShowDeviations] = useState(false);
+
+  // Программа задаёт для каждого упражнения ровно одну метрику усилия: жимам RPE,
+  // подсобке RIR. Спрашивать обе — значит задавать один вопрос дважды.
+  const usesRpe = targetRpeMax != null || targetRirMin == null;
+  const usesRir = !usesRpe;
+
+  // Сколько полей уведено от «всё чисто». Показывается на свёрнутом блоке,
+  // чтобы случайно оставленный флаг не потерялся из виду.
+  const deviationCount = [
+    bench && pauseQuality !== "clean",
+    bench && touchPoint !== "stable",
+    bench && trajectoryQuality !== "clean",
+    techniqueSigns.length > 0,
+    (painScore ?? 0) > 0,
+    painChangesMovement,
+    medicalSymptom,
+    unsafeLossOfControl,
+    isWarmup,
+    videoUrl.trim() !== "",
+  ].filter(Boolean).length;
 
   const bump = (delta: number) => {
     const current = Number.parseFloat(weight.replace(",", ".")) || 0;
@@ -747,37 +844,45 @@ function SetForm({
   return chips;
 })();
 
+  // Быстрая запись возможна, когда повторы уже заданы: тогда касание по шкале
+  // усилия само сохраняет подход и запускает отдых.
+  const canQuickSave = reps.trim() !== "" && !saving;
+
+  async function commit(effort?: { rpe?: number | null; rir?: number | null }) {
+    unlockAudio();
+    setSaving(true);
+    try {
+      const parsedWeight = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null;
+      const parsedReps = reps.trim() ? Number.parseInt(reps, 10) : null;
+      await onSubmit({
+        weight: Number.isNaN(parsedWeight as number) ? null : parsedWeight,
+        reps: Number.isNaN(parsedReps as number) ? null : parsedReps,
+        rir: effort && "rir" in effort ? (effort.rir ?? null) : rir,
+        rpe: effort && "rpe" in effort ? (effort.rpe ?? null) : rpe,
+        velocity,
+        stickingPoint,
+        isWarmup,
+        pauseQuality,
+        touchPoint,
+        trajectoryQuality,
+        techniqueSigns,
+        painScore,
+        painChangesMovement,
+        medicalSymptom,
+        unsafeLossOfControl,
+        videoUrl: videoUrl.trim() || null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <form
       className="space-y-4 rounded-xl border border-border bg-card p-4"
       onSubmit={async (event) => {
         event.preventDefault();
-        unlockAudio();
-        setSaving(true);
-        try {
-          const parsedWeight = weight.trim() ? Number.parseFloat(weight.replace(",", ".")) : null;
-          const parsedReps = reps.trim() ? Number.parseInt(reps, 10) : null;
-          await onSubmit({
-            weight: Number.isNaN(parsedWeight as number) ? null : parsedWeight,
-            reps: Number.isNaN(parsedReps as number) ? null : parsedReps,
-            rir,
-            rpe,
-            velocity,
-            stickingPoint,
-            isWarmup,
-            pauseQuality,
-            touchPoint,
-            trajectoryQuality,
-            techniqueSigns,
-            painScore,
-            painChangesMovement,
-            medicalSymptom,
-            unsafeLossOfControl,
-            videoUrl: videoUrl.trim() || null,
-          });
-        } finally {
-          setSaving(false);
-        }
+        await commit();
       }}
     >
       <div className="grid grid-cols-2 gap-3">
@@ -800,57 +905,145 @@ function SetForm({
   </div>
 )}
 
-      {(bench || targetRpeMax != null) && (
-  <ScaleButtons label="Фактический RPE" values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]} selected={rpe} set={setRpe} />
-)}
-      <ScaleButtons label="Фактический RIR" values={[0, 1, 2, 3, 4, 5]} selected={rir} set={setRir} />
+      {usesRpe && (
+        <fieldset>
+          <legend className="text-xs text-muted-foreground">
+            Последний повтор{canQuickSave ? " — касание записывает подход" : ""}
+          </legend>
+          <div className="mt-1.5 grid gap-1.5">
+            {LAST_REP_OBSERVATIONS.map((option) => {
+              const selected = observationFromRpe(rpe) === option.id;
+              const isTarget = targetRpeMax != null && observationFromRpe(targetRpeMax) === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    setRpe(option.rpe);
+                    setVelocity(option.velocity);
+                    if (canQuickSave) void commit({ rpe: option.rpe });
+                  }}
+                  className={`flex min-h-12 items-center justify-between gap-2 rounded-lg border px-3 text-left ${selected ? "border-primary bg-primary text-primary-foreground" : isTarget ? "border-primary/50" : "border-border"}`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold">{option.label}</span>
+                    <span className={`block text-[11px] ${selected ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                      {option.hint}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] opacity-70">
+                    {isTarget ? "цель · " : ""}RPE {String(option.rpe).replace(".", ",")}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowNumericRpe((value) => !value)}
+            className="mt-2 text-[11px] text-muted-foreground underline underline-offset-2"
+          >
+            {showNumericRpe ? "Скрыть числовую шкалу" : "Указать RPE числом"}
+          </button>
+          {showNumericRpe && (
+            <div className="mt-1.5">
+              <ScaleButtons
+                label="Фактический RPE"
+                values={[5, 6, 6.5, 7, 7.5, 8, 9, 10]}
+                selected={rpe}
+                set={setRpe}
+              />
+            </div>
+          )}
+        </fieldset>
+      )}
+      {usesRir && (
+        <ScaleButtons
+          label={
+            canQuickSave
+              ? "Сколько ещё повторов смог бы с той же техникой — касание записывает подход"
+              : "Сколько ещё повторов смог бы с той же техникой"
+          }
+          values={[0, 1, 2, 3, 4, 5]}
+          selected={rir}
+          set={setRir}
+          quickSave={canQuickSave ? (value) => { setRir(value); void commit({ rir: value }); } : undefined}
+        />
+      )}
 
-      {bench && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <SelectField label="Пауза" value={pauseQuality ?? ""} set={(value) => setPauseQuality((value || null) as SetDraft["pauseQuality"])} options={[["clean", "Чистая"], ["short", "Короткая"], ["lost", "Потеряна"]]} />
-          <SelectField label="Точка касания" value={touchPoint ?? ""} set={(value) => setTouchPoint((value || null) as SetDraft["touchPoint"])} options={[["stable", "Стабильна"], ["high", "Выше"], ["low", "Ниже"], ["variable", "Плавает"]]} />
-          <SelectField label="Траектория" value={trajectoryQuality ?? ""} set={(value) => setTrajectoryQuality((value || null) as SetDraft["trajectoryQuality"])} options={[["clean", "Чистая"], ["asymmetric", "Асимметрия"], ["deviated", "Отклонение"]]} />
-        </div>
-      )}
-     {bench && (
-      <fieldset>
-        <legend className="text-xs font-medium text-muted-foreground">Технические признаки</legend>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {([
-            ["pause_or_touch_lost", "Потеря паузы/касания"],
-            ["asymmetry", "Асимметрия"],
-            ["unexpected_slowdown", "Неожиданное замедление"],
-            ["hips_lifted", "Отрыв таза"],
-            ["grinder", "Выраженный гриндер"],
-          ] as const).map(([value, label]) => (
-            <button key={value} type="button" onClick={() => toggleSign(value)} className={`min-h-10 rounded-lg border px-2 text-xs ${techniqueSigns.includes(value) ? "border-warning bg-warning/15" : "border-border"}`}>{label}</button>
-          ))}
-        </div>
-      </fieldset>
-      )}
-      <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10
-        <input type="range" min="0" max="10" value={painScore ?? 0} onChange={(event) => setPainScore(Number(event.target.value))} className="mt-2 w-full" />
-      </label>
-      <div className="space-y-1 rounded-lg border border-destructive/30 p-3">
-        <CheckRow label="Боль меняет движение" checked={painChangesMovement} set={setPainChangesMovement} />
-        <CheckRow label="Появился медицинский симптом" checked={medicalSymptom} set={setMedicalSymptom} />
-        <CheckRow label="Опасная потеря контроля" checked={unsafeLossOfControl} set={setUnsafeLossOfControl} />
-      </div>
-      <label className="block text-xs text-muted-foreground">Видео/ссылка (опционально)
-        <input value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://…" className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
-      </label>
-      <CheckRow label="Это разминочный подход — исключить из тоннажа" checked={isWarmup} set={setIsWarmup} />
-     {bench && (
-      <fieldset>
-        <legend className="text-xs text-muted-foreground">Скорость</legend>
-        <div className="mt-1 grid grid-cols-3 gap-2">
-          {(["fast", "normal", "slow"] as const).map((value) => (
-            <button key={value} type="button" onClick={() => setVelocity(value)} className={`h-10 rounded-md border text-xs font-semibold ${velocity === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value === "fast" ? "Быстро" : value === "slow" ? "Медленно" : "Нормально"}</button>
-          ))}
-        </div>
-      </fieldset>
+      {/*
+        Всё, что ниже, — отчёт об отклонениях, а не обязательные поля. Значения
+        по умолчанию означают «ничего не пошло не так», и быстрая запись сохраняет
+        именно их. Разворачивать блок нужно только когда есть что отметить.
+      */}
+      <div className={`rounded-lg border ${deviationCount > 0 ? "border-warning/50 bg-warning/5" : "border-border"}`}>
+        <button
+          type="button"
+          onClick={() => setShowDeviations((value) => !value)}
+          className="flex min-h-11 w-full items-center justify-between gap-2 px-3 text-left text-xs font-medium"
+        >
+          <span className={deviationCount > 0 ? "text-warning" : "text-muted-foreground"}>
+            {deviationCount > 0
+              ? `Отклонения отмечены: ${deviationCount}`
+              : "Что-то пошло не так? Отметить"}
+          </span>
+          <span className="shrink-0 text-muted-foreground">{showDeviations ? "свернуть" : "развернуть"}</span>
+        </button>
+        {showDeviations && (
+          <div className="space-y-4 border-t border-border px-3 pb-3 pt-3">
+            {bench && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SelectField label="Пауза" value={pauseQuality ?? ""} set={(value) => setPauseQuality((value || null) as SetDraft["pauseQuality"])} options={[["clean", "Чистая"], ["short", "Короткая"], ["lost", "Потеряна"]]} />
+                <SelectField label="Точка касания" value={touchPoint ?? ""} set={(value) => setTouchPoint((value || null) as SetDraft["touchPoint"])} options={[["stable", "Стабильна"], ["high", "Выше"], ["low", "Ниже"], ["variable", "Плавает"]]} />
+                <SelectField label="Траектория" value={trajectoryQuality ?? ""} set={(value) => setTrajectoryQuality((value || null) as SetDraft["trajectoryQuality"])} options={[["clean", "Чистая"], ["asymmetric", "Асимметрия"], ["deviated", "Отклонение"]]} />
+              </div>
+            )}
+            {bench && (
+              <fieldset>
+                <legend className="text-xs font-medium text-muted-foreground">Технические признаки</legend>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {([
+                    ["pause_or_touch_lost", "Потеря паузы/касания"],
+                    ["asymmetry", "Асимметрия"],
+                    ["unexpected_slowdown", "Неожиданное замедление"],
+                    ["hips_lifted", "Отрыв таза"],
+                    ["grinder", "Выраженный гриндер"],
+                  ] as const).map(([value, label]) => (
+                    <button key={value} type="button" onClick={() => toggleSign(value)} className={`min-h-10 rounded-lg border px-2 text-xs ${techniqueSigns.includes(value) ? "border-warning bg-warning/15" : "border-border"}`}>{label}</button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+            <label className="block text-xs text-muted-foreground">Боль: {painScore ?? 0}/10
+              <input type="range" min="0" max="10" value={painScore ?? 0} onChange={(event) => setPainScore(Number(event.target.value))} className="mt-2 w-full" />
+            </label>
+            <div className="space-y-1 rounded-lg border border-destructive/30 p-3">
+              <CheckRow label="Боль меняет движение" checked={painChangesMovement} set={setPainChangesMovement} />
+              <CheckRow label="Появился медицинский симптом" checked={medicalSymptom} set={setMedicalSymptom} />
+              <CheckRow label="Опасная потеря контроля" checked={unsafeLossOfControl} set={setUnsafeLossOfControl} />
+            </div>
+            {bench && (
+              <fieldset>
+                <legend className="text-xs text-muted-foreground">Скорость штанги</legend>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Заполняется сама по выбранному событию — правьте, только если разошлось.</p>
+                <div className="mt-1.5 grid grid-cols-3 gap-2">
+                  {(["fast", "normal", "slow"] as const).map((value) => (
+                    <button key={value} type="button" onClick={() => setVelocity(value)} className={`h-10 rounded-md border text-xs font-semibold ${velocity === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value === "fast" ? "Быстро" : value === "slow" ? "Медленно" : "Нормально"}</button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+            <label className="block text-xs text-muted-foreground">Видео/ссылка (опционально)
+              <input value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://…" className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
+            </label>
+            <CheckRow label="Это разминочный подход — исключить из тоннажа" checked={isWarmup} set={setIsWarmup} />
+          </div>
         )}
-      <Button type="submit" disabled={saving} className="h-11 w-full">{saving ? "Сохраняю…" : "Записать подход"}</Button>
+      </div>
+
+      <Button type="submit" disabled={saving} variant={canQuickSave ? "outline" : "default"} className="h-11 w-full">
+        {saving ? "Сохраняю…" : canQuickSave ? "Записать без оценки усилия" : "Записать подход"}
+      </Button>
     </form>
   );
 }
@@ -878,9 +1071,16 @@ function EditSetForm({ set, onSave, onCancel }: { set: SessionSetRow; onSave: (v
   );
 }
 
-function ScaleButtons({ label, values, selected, set }: { label: string; values: readonly number[]; selected: number | null; set: (value: number | null) => void }) {
+function ScaleButtons({ label, values, selected, set, quickSave }: {
+  label: string;
+  values: readonly number[];
+  selected: number | null;
+  set: (value: number | null) => void;
+  /** Когда задан, касание по шкале сразу записывает подход, а не просто выбирает значение. */
+  quickSave?: (value: number) => void;
+}) {
   return (
-    <fieldset><legend className="text-xs text-muted-foreground">{label}</legend><div className="mt-1 flex flex-wrap gap-1.5">{values.map((value) => <button key={value} type="button" onClick={() => set(selected === value ? null : value)} className={`min-h-9 min-w-10 flex-1 rounded-md border px-2 text-xs font-semibold ${selected === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value}</button>)}</div></fieldset>
+    <fieldset><legend className="text-xs text-muted-foreground">{label}</legend><div className="mt-1 flex flex-wrap gap-1.5">{values.map((value) => <button key={value} type="button" onClick={() => (quickSave ? quickSave(value) : set(selected === value ? null : value))} className={`min-h-11 min-w-10 flex-1 rounded-md border px-2 text-xs font-semibold ${selected === value ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>{value}</button>)}</div></fieldset>
   );
 }
 

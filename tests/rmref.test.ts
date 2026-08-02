@@ -10,6 +10,8 @@ import {
   roundToStepHalfDown,
   weightFromRmrefPercent,
   weightRangeFromRmref,
+  suggestCalibrationTripleWeight,
+  TRIPLE_PERCENT_BY_RPE,
 } from "../lib/program/rmref.ts";
 
 
@@ -188,4 +190,52 @@ test("a single comparable calibration is enough to move RMref", () => {
     }),
     { allowed: true, nextRmrefKg: 115, reasons: [] },
   );
+});
+
+test("подсказка веса стандартизированной тройки не требует логировать разминку", () => {
+  // Первый замер: считается от RMref как 86,3% и округляется вниз до шага 2,5.
+  const first = suggestCalibrationTripleWeight({ rmrefKg: 115 });
+  assert.equal(first?.weightKg, 97.5);
+  assert.equal(first?.basis, "rmref");
+
+  // Оценка разминки сдвигает подсказку ровно на один шаг в каждую сторону.
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 115, warmupFeel: "easy" })?.weightKg, 100);
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 115, warmupFeel: "hard" })?.weightKg, 95);
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 115, warmupFeel: "normal" })?.weightKg, 97.5);
+
+  // Прошлая тройка на RPE 8 переносится как есть.
+  const same = suggestCalibrationTripleWeight({
+    rmrefKg: 115,
+    previous: { weightKg: 100, rpe: 8 },
+  });
+  assert.equal(same?.weightKg, 100);
+  assert.equal(same?.basis, "previous_calibration");
+
+  // Прошлая тройка на другом RPE приводится к эквиваленту RPE 8.
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 115, previous: { weightKg: 100, rpe: 7 } })?.weightKg,
+    102.5,
+  );
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 115, previous: { weightKg: 100, rpe: 9 } })?.weightKg,
+    95,
+  );
+
+  // Без фактического RPE вес прошлой тройки берётся без пересчёта.
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 115, previous: { weightKg: 102.5, rpe: null } })?.weightKg,
+    102.5,
+  );
+
+  // Прошлая калибровка важнее RMref: подсказка не откатывается к расчёту от базы.
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 200, previous: { weightKg: 100, rpe: 8 } })?.weightKg,
+    100,
+  );
+
+  // Некорректный RMref без истории подсказки не даёт.
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 0 }), null);
+
+  // Таблица долей 1ПМ согласована с коэффициентом пересчёта e1RM.
+  assert.equal(TRIPLE_PERCENT_BY_RPE["8"], STANDARD_TRIPLE_RPE8_FACTOR);
 });
