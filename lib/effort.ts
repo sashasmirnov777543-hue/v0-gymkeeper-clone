@@ -13,8 +13,15 @@
  * которое воспроизводится одинаково через полгода, а именно это и требуется от мерки:
  * показатель программы — тренд из шести замеров одним прибором, и систематическое
  * смещение в нём вычитается само.
+ *
+ * Редакция 2.1 добавила пятое событие снизу. В 2.0 шкала начиналась с RPE 6, а карточки
+ * содержали 29 подходов с целью ниже шести — попадание в такую цель невозможно было
+ * записать: любой лёгкий подход логировался как «шёл как первый», то есть «тяжелее
+ * плана». Это ломало и статистику, и расчёт надбавки Δ, которая читает разрыв
+ * между целью и фактом.
  */
 export type LastRepObservation =
+  | "effortless"
   | "same_speed"
   | "slower"
   | "sticking_passed"
@@ -30,6 +37,13 @@ export type EffortOption = Readonly<{
 }>;
 
 export const LAST_REP_OBSERVATIONS: readonly EffortOption[] = [
+  {
+    id: "effortless",
+    label: "Совсем легко",
+    hint: "разминочный по ощущению, запас огромный",
+    rpe: 4,
+    velocity: "fast",
+  },
   {
     id: "same_speed",
     label: "Шёл как первый",
@@ -69,6 +83,7 @@ export function effortOption(id: LastRepObservation): EffortOption {
 /** Обратное соответствие — чтобы подсветить выбранное, если RPE уже проставлен. */
 export function observationFromRpe(rpe: number | null): LastRepObservation | null {
   if (rpe == null) return null;
+  if (rpe < 5) return "effortless";
   if (rpe <= 6.5) return "same_speed";
   if (rpe < 8) return "slower";
   if (rpe < 8.75) return "sticking_passed";

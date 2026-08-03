@@ -13,7 +13,9 @@
     "db:migrate": "node scripts/migrate.mjs",
     "program:generate": "node scripts/generate-program-sql.mjs",
     "db:dry-run": "node scripts/migration-dry-run.mjs",
-    "check": "npm run lint && npm test && npm run typecheck && npm run build"
+    "check": "npm run lint && npm test && npm run typecheck && npm run build",
+    "program:build": "node scripts/build-program-v3.mjs",
+    "program:verify": "node scripts/verify-program-v3.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

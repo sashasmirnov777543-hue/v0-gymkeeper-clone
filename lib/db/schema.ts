@@ -187,7 +187,7 @@ export const syncOps = pgTable("sync_ops", {
 
 export const programState = pgTable("program_state", {
   profileKey: text("profile_key").primaryKey().default("primary"),
-  programVersion: text("program_version").notNull().default("h2-v9-2.0"),
+  programVersion: text("program_version").notNull().default("h2-v9-3.0"),
   startDate: date("start_date"),
   currentProgramDay: integer("current_program_day").notNull().default(1),
   rmrefKg: numeric("rmref_kg").notNull().default("115"),

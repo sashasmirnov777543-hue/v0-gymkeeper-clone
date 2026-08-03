@@ -3,15 +3,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = join(root, "lib/program/h2-v9-v2.json");
-const outputPath = join(root, "migrations/012_seed_h2_v9_v2.sql");
+const sourcePath = join(root, "lib/program/h2-v9-v3.json");
+const outputPath = join(root, "migrations/014_seed_h2_v9_v3.sql");
 
 /**
  * Уникальные индексы workouts.program_key и workout_exercises.program_key НЕ версионированы.
  * Без префикса upsert редакции 2.0 переписал бы строки редакции 1.0 прямо на месте
  * и переподчинил бы их новым циклам. Префикс делает ключи непересекающимися.
  */
-const KEY_PREFIX = "v2:";
+const KEY_PREFIX = "v3:";
 const pk = (id) => `${KEY_PREFIX}${id}`;
 const program = JSON.parse(readFileSync(sourcePath, "utf8"));
 
@@ -67,8 +67,8 @@ function macrocycle(block, cycle) {
 }
 
 const lines = [
-  "-- 012: Жимовая программа, редакция 2.0. Сгенерировано из lib/program/h2-v9-v2.json.",
-  "-- Идемпотентный upsert по префиксованным ключам v2:. Строки редакции 1.0 и история сессий не затрагиваются.",
+  "-- 014: Жимовая программа, редакция 2.1. Сгенерировано из lib/program/h2-v9-v3.json.",
+  "-- Идемпотентный upsert по префиксованным ключам v3:. Строки редакций 1.0 и 2.0 и история сессий не затрагиваются.",
   "",
 ];
 

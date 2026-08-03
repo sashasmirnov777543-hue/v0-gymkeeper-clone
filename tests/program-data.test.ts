@@ -37,7 +37,7 @@ function accessoryCount(cycleId: string): number {
 
 
 test("canonical program has 176 days, 22 cycles and 88 B-slots", () => {
-  assert.equal(H2_V9_PROGRAM.version, "h2-v9-2.0");
+  assert.equal(H2_V9_PROGRAM.version, "h2-v9-3.0");
   assert.equal(H2_V9_PROGRAM.durationDays, 176);
   assert.equal(H2_V9_PROGRAM.cycleLengthDays, 8);
   assert.equal(H2_V9_PROGRAM.defaultRmrefKg, 115);
@@ -45,13 +45,15 @@ test("canonical program has 176 days, 22 cycles and 88 B-slots", () => {
   assert.equal(H2_V9_PROGRAM.cycles.filter((cycle) => cycle.block === "h2").length, 9);
   assert.equal(H2_V9_PROGRAM.cycles.filter((cycle) => cycle.block === "v9").length, 13);
   assert.equal(listProgramWorkouts().length, 88);
-  // 582 плановых упражнения; ветка прямого 1ПМ добавляет 583-е.
-  assert.equal(H2_V9_PROGRAM_VALIDATION.counts.exercises, 582);
+  // 640 плановых упражнений; ветка прямого 1ПМ добавляет 641-е.
+  // Больше, чем в редакции 2.0: ступени реаб-блока с Ц7 добавляют прон. Y,
+  // а с Ц10 — ещё и серратус-пуш.
+  assert.equal(H2_V9_PROGRAM_VALIDATION.counts.exercises, 640);
   const branchExercises = listProgramWorkouts().flatMap((workout) =>
     workout.branches.flatMap((branch) => branch.exercises ?? []),
   );
   assert.equal(branchExercises.length, 1);
-  assert.equal(H2_V9_PROGRAM_VALIDATION.counts.exercises + branchExercises.length, 583);
+  assert.equal(H2_V9_PROGRAM_VALIDATION.counts.exercises + branchExercises.length, 641);
   assert.deepEqual(H2_V9_PROGRAM_VALIDATION.errors, []);
   assert.equal(H2_V9_PROGRAM_VALIDATION.valid, true);
 });
@@ -135,6 +137,19 @@ test("conditional heavy singles exist only at the approved V9 locations", () => 
     }
   }
   assert.deepEqual(actual, ["v9-8-b2", "v9-10-b2", "v9-12-b2"]);
+  // Сингл Ц21 привязан к ветке теста, а не только к уровню допуска:
+  // при тесте-тройке он не выполняется вовсе.
+  const conditions = actual.map(
+    (id) =>
+      listProgramWorkouts()
+        .find((workout) => workout.id === id)
+        ?.exercises.find((exercise) => exercise.role === "conditional_single")?.condition,
+  );
+  assert.deepEqual(conditions, [
+    "clearance_level_2_or_3_and_all_four_gates",
+    "clearance_level_2_or_3_and_all_four_gates",
+    "test_branch_c_and_clearance_level_3",
+  ]);
 
   // То же самое по роли: только эти три цикла и только слот B2.
   const byRole = listProgramWorkouts().filter((workout) =>
@@ -161,14 +176,18 @@ test("V9-10 is a heavy specific-strength cycle that carries a conditional single
   assert.equal(single.sets, "3");
   assert.equal(single.reps, "1");
   assert.equal(single.percent?.min, 90);
-  assert.equal(single.targetRpe?.max, 8);
+  // Редакция 2.0 писала здесь 8, потому что генератор зажимал значение перед записью.
+  // Настоящий расчёт от 102,5 кг (89,1% RMref) даёт 7,0 на первом сингле и 7,7 на третьем.
+  assert.deepEqual(single.targetRpe, { min: 7, max: 7.7 });
+  assert.ok((single.targetRpe?.max ?? 9) < 8, "RPE больше не упирается в потолок");
 
   const backoff = b2.exercises.find((exercise) => exercise.role === "primary_backoff");
   assert.ok(backoff, "the mandatory bench work in B2 is the back-off");
   assert.equal(backoff.optional, false);
   assert.equal(backoff.sets, "2");
   assert.equal(backoff.reps, "2");
-  assert.equal(backoff.percent?.min, 85);
+  // Редакция 2.1: бэкофф тяжелее, чем в 2.0 (было 85%) — так Ц19 отличается от Ц17.
+  assert.equal(backoff.percent?.min, 87.5);
 
   const b4Bench = b4.exercises.find((exercise) => exercise.role === "primary_bench");
   assert.ok(b4Bench);
@@ -180,28 +199,41 @@ test("V9-10 is a heavy specific-strength cycle that carries a conditional single
 });
 
 
-test("V9-12 pairs a conditional single in B2 with the T-4 primer in B4", () => {
+test("V9-12 peaks on doubles and gates its single behind the direct-1RM branch", () => {
   const b2 = getProgramWorkout("v9", 12, "B2");
   const b4 = getProgramWorkout("v9", 12, "B4");
   assert.ok(b2);
   assert.ok(b4);
 
+  // Редакция 2.0 ставила сюда сингл 107,5 кг, подписанный как 92,5%. Фактически это
+  // 93,5% — выше потолка Уровня 2, и настоящий RPE 8,4, а не 8. При тесте-тройке
+  // такой подход берёт самый высокий риск программы ради замера, который его
+  // не проверяет, поэтому по умолчанию его больше нет.
   const single = b2.exercises.find((exercise) => exercise.role === "conditional_single");
-  assert.ok(single, "V9-12 B2 contains the conditional single");
+  assert.ok(single, "V9-12 B2 keeps the single as the branch-C rehearsal");
   assert.equal(single.optional, true);
   assert.equal(single.sets, "1");
   assert.equal(single.reps, "1");
-  assert.equal(single.percent?.min, 92.5);
-  assert.deepEqual(single.targetRpe, { min: 8, max: 8 });
+  assert.equal(single.percent?.min, 90);
+  assert.equal(single.condition, "test_branch_c_and_clearance_level_3");
+  assert.ok((single.exampleKg?.min ?? 0) <= 106.375, "single stays under the level-2 ceiling");
+  assert.ok((single.targetRpe?.max ?? 0) < 8, "single is no longer pinned to the ceiling");
 
-  const primers = b4.exercises.filter((exercise) => exercise.role === "primer_single");
-  assert.equal(primers.length, 1);
-  const [primer] = primers;
-  assert.ok(primer);
-  assert.equal(primer.sets, "2");
-  assert.equal(primer.reps, "1");
-  assert.equal(primer.percent?.min, 90);
-  assert.equal(primer.optional, false);
+  // Обязательная работа цикла — двойки, а не сингл.
+  const backoff = b2.exercises.find((exercise) => exercise.role === "primary_backoff");
+  assert.ok(backoff);
+  assert.equal(backoff.optional, false);
+  assert.equal(backoff.sets, "3");
+  assert.equal(backoff.reps, "2");
+  assert.equal(backoff.percent?.min, 87.5);
+
+  // T−4 — двойки, а не второй сингл: тройку @RPE 8 праймер-сингл не проверяет.
+  const b4Bench = b4.exercises.find((exercise) => exercise.role === "primary_bench");
+  assert.ok(b4Bench);
+  assert.equal(b4Bench.sets, "2");
+  assert.equal(b4Bench.reps, "2");
+  assert.equal(b4Bench.percent?.min, 85);
+  assert.equal(b4Bench.optional, false);
   assert.ok(b4.exercises.every((exercise) => exercise.role !== "conditional_single"));
   assert.ok(b4.exercises.every((exercise) => (exercise.targetRpe?.max ?? 0) <= 8));
 });
@@ -267,7 +299,7 @@ test("no planned set is programmed above RPE 8", () => {
 });
 
 
-test("the program holds 83 working sets at or above 80% RMref, 67 of them in V9", () => {
+test("the program holds 92 working sets at or above 80% RMref, 76 of them in V9", () => {
   const dose = (cycles: typeof H2_V9_PROGRAM.cycles) =>
     cycles.reduce(
       (total, cycle) =>
@@ -292,7 +324,11 @@ test("the program holds 83 working sets at or above 80% RMref, 67 of them in V9"
 
   const hypertrophy = dose(H2_V9_PROGRAM.cycles.filter((cycle) => cycle.block === "h2"));
   const strength = dose(H2_V9_PROGRAM.cycles.filter((cycle) => cycle.block === "v9"));
-  assert.equal(strength, 67);
+  // Силовой блок: 76 сетов за 104 дня = 5,1 в неделю против 4,5 в редакции 2.0.
+  // Верхняя половина диапазона минимальной эффективной дозы (3–6 сетов в неделю),
+  // а не середина. Прирост сознательный и небольшой; при просадке восстановления
+  // первым снимается один подход с B4 циклов 12 и 13.
+  assert.equal(strength, 76);
   assert.equal(hypertrophy, 16);
-  assert.equal(hypertrophy + strength, 83);
+  assert.equal(hypertrophy + strength, 92);
 });

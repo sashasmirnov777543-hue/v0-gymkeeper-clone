@@ -52,6 +52,23 @@ export const CLEARANCE_CEILING_PERCENT = {
 } as const;
 export type GateClearanceLevel = keyof typeof CLEARANCE_CEILING_PERCENT;
 
+/**
+ * Фактический процент от RMref по весу, который реально окажется на штанге.
+ *
+ * Проверять подпись вместо штанги — дыра, а не формальность. В редакции 2.0 сингл
+ * цикла 21 был записан как `percent: 92.5` при `exampleKg: 107.5`; фактически это
+ * 93,5% — выше потолка Уровня 2. Шлюз сравнивал 92,5 с 92,5 и пропускал единственный
+ * подход программы, который обязан был остановить.
+ */
+export function actualPercentOfRmref(
+  plannedWeightKg: number,
+  rmrefKg: number,
+): number | null {
+  if (!Number.isFinite(plannedWeightKg) || plannedWeightKg <= 0) return null;
+  if (!Number.isFinite(rmrefKg) || rmrefKg <= 0) return null;
+  return (100 * plannedWeightKg) / rmrefKg;
+}
+
 type NoCompensation = {
   compensation: "none";
   substitution: "none";
@@ -78,8 +95,16 @@ export type ConditionalHeavySingleInput = {
   medicalClearanceForPlannedLoadAndStraining: boolean;
   /** Уровень медицинского допуска редакции 2.0. Необязателен для обратной совместимости. */
   clearanceLevel?: GateClearanceLevel;
-  /** Запланированный процент от RMref — сверяется с потолком уровня. */
+  /**
+   * Запланированный процент от RMref по спецификации — запасной вариант.
+   * Используется, только если не переданы вес и RMref: подпись может расходиться
+   * с фактической нагрузкой из-за округления к шагу 2,5 кг.
+   */
   plannedPercentOfRmref?: number;
+  /** Вес, который реально окажется на штанге. Имеет приоритет над подписью. */
+  plannedWeightKg?: number;
+  /** Текущий RMref, включая накопленную надбавку Δ. */
+  rmrefKg?: number;
   spotterPresent: boolean;
   safetiesSet: boolean;
   redFlagSymptoms: boolean;
@@ -145,18 +170,29 @@ export function decideConditionalHeavySingle(
     reasons.push("expected-rpe-outside-target-band");
   }
 
-  // Уровень допуска: синглы доступны с уровня 2. Дополнительно проверяется,
-  // что запланированный процент не выходит за потолок уровня.
+  // Уровень допуска: синглы доступны с уровня 2. Дополнительно проверяется потолок.
+  // Если известны вес и RMref, потолок считается от ШТАНГИ; подпись в процентах —
+  // только запасной вариант, когда веса нет.
   if (input.clearanceLevel) {
     if (input.clearanceLevel === "level_1") {
       reasons.push("clearance-level-insufficient");
-    } else if (
-      typeof input.plannedPercentOfRmref === "number" &&
-      Number.isFinite(input.plannedPercentOfRmref) &&
-      input.plannedPercentOfRmref >
-        CLEARANCE_CEILING_PERCENT[input.clearanceLevel] + 1e-9
-    ) {
-      reasons.push("planned-percent-above-clearance-ceiling");
+    } else {
+      const fromBar =
+        typeof input.plannedWeightKg === "number" && typeof input.rmrefKg === "number"
+          ? actualPercentOfRmref(input.plannedWeightKg, input.rmrefKg)
+          : null;
+      const effectivePercent =
+        fromBar ??
+        (typeof input.plannedPercentOfRmref === "number" &&
+        Number.isFinite(input.plannedPercentOfRmref)
+          ? input.plannedPercentOfRmref
+          : null);
+      if (
+        effectivePercent !== null &&
+        effectivePercent > CLEARANCE_CEILING_PERCENT[input.clearanceLevel] + 1e-9
+      ) {
+        reasons.push("planned-percent-above-clearance-ceiling");
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import { roundToStepHalfDown as roundToStep } from "./program/rmref.ts"
+import { DELTA_MAX_KG } from "./program/delta.ts"
 
 export { roundToStep }
 
@@ -14,6 +15,12 @@ export type Recommendation = {
   weight: number
   reason: string
   direction: "up" | "down" | "same"
+  /**
+   * Подход прошёл легче цели, но вес задан программой. Не команда, а сигнал:
+   * решение о шаге надбавки принимает `decideDelta` — с проверкой светофора,
+   * фазы цикла и коридора.
+   */
+  suggestDeltaRaise?: boolean
 } | null
 
 const STEP = 2.5 // шаг штанги, кг
@@ -64,19 +71,28 @@ export function isPercentPrescribed(weightText: string | null): boolean {
  * ниже диапазона (тяжелее) -> снизить.
  * Корректировка пропорциональна выходу за границу, максимум ±2 шага (±5 кг).
  *
- * `fixedLoad` — вес задан программой (процент от RMref, фиксированные повторения):
- * выше предписанного веса НЕ рекомендуем. Запас сверх цели в таких циклах —
- * это план (например, намеренно недогруженный вводный цикл), а не повод
- * накидывать блины. Снижение при перегрузе остаётся.
+ * `fixedLoad` — вес задан программой (процент от RMref, фиксированные повторения).
+ * Редакция 2.0 в этом случае не повышала вес никогда: «запас есть, и это по плану».
+ * Но запас сверх цели на зелёном статусе — это не план, а сигнал, что RMref отстал
+ * от фактической силы, и приложение его уже вычислило. Редакция 2.1 отдаёт этот
+ * сигнал наверх как предложение поднять надбавку Δ (lib/program/delta.ts).
+ *
+ * Повышение всё так же не самовольное: шаг ровно один (2,5 кг), не чаще раза за цикл,
+ * не в разгрузочных циклах, только на зелёном статусе и в пределах коридора ±10 кг.
+ * Эти условия проверяет `decideDelta`; здесь считается только предложение.
+ *
+ * `deltaKg` — уже накопленная надбавка: она входит в предписанный вес, и предлагать
+ * повышение сверх коридора нельзя.
  */
 export function recommendWeight(
   pastSets: LoggedSetLite[],
   targetMin: number | null,
   targetMax: number | null,
   fallbackWeight: number | null,
-  opts?: { fixedLoad?: boolean },
+  opts?: { fixedLoad?: boolean; deltaKg?: number },
 ): Recommendation {
   const fixedLoad = opts?.fixedLoad ?? false
+  const deltaKg = opts?.deltaKg ?? 0
   const prescribed = fallbackWeight != null ? roundToStep(fallbackWeight) : null
 
   const working = pastSets.filter(
@@ -107,14 +123,18 @@ export function recommendWeight(
   // одна "ступень" корректировки за каждый полный RIR выхода за цель, максимум 2
   let steps = Math.max(-2, Math.min(2, roundHalfAway(delta)))
 
-  // Фиксированная нагрузка (% от RMref): вверх от предписанного веса не уходим.
+  // Фиксированная нагрузка (% от RMref).
   if (fixedLoad && steps > 0) {
     if (prescribed == null || maxWeight >= prescribed) {
       const base = prescribed != null ? Math.min(maxWeight, prescribed) : maxWeight
+      const atCorridorEdge = deltaKg >= DELTA_MAX_KG
       return {
         weight: roundToStep(base),
-        reason: `RIR ${formatRir(avgRir)} — запас есть, и это по плану. Вес задан программой, не повышай`,
+        reason: atCorridorEdge
+          ? `RIR ${formatRir(avgRir)} — запас есть, но надбавка уже на верхней границе коридора. Ждём контрольную точку`
+          : `RIR ${formatRir(avgRir)} — запас есть. Сегодня вес по программе; если это повторится на зелёном, надбавка Δ поднимет его на 2,5 кг`,
         direction: "same",
+        suggestDeltaRaise: !atCorridorEdge,
       }
     }
     // ниже предписанного — можно подняться, но не выше плана

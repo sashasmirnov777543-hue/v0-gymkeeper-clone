@@ -36,6 +36,33 @@ test("v2 schema migration is additive and switches the active program version", 
 });
 
 
+test("v3 schema migration is additive and switches the active program version", () => {
+  const sql = read("migrations/013_delta_offset.sql");
+  assert.doesNotMatch(sql, /\b(?:DELETE|TRUNCATE|DROP TABLE)\b/i);
+  assert.match(sql, /ALTER TABLE program_state\s+ADD COLUMN IF NOT EXISTS delta_offset_kg/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS delta_last_raised_cycle_key/);
+  assert.match(sql, /CHECK \(delta_offset_kg >= -10 AND delta_offset_kg <= 10\)/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS delta_offset_events/);
+  assert.match(sql, /VALUES \('active_program_version', 'h2-v9-3\.0'\)/);
+});
+
+
+test("v3 seed keeps the v2 rows in place", () => {
+  const sql = read("migrations/014_seed_h2_v9_v3.sql");
+  assert.equal((sql.match(/INSERT INTO cycles /g) ?? []).length, 22);
+  assert.equal((sql.match(/INSERT INTO workouts /g) ?? []).length, 88);
+  assert.equal((sql.match(/INSERT INTO workout_exercises /g) ?? []).length, 641);
+  assert.doesNotMatch(sql, /\b(?:DELETE|TRUNCATE|DROP TABLE)\b/i);
+  // Ключи с префиксом v3: — строки редакции 2.0 не переписываются.
+  assert.match(sql, /v3:h2-1/);
+  assert.doesNotMatch(sql, /'v2:/);
+  assert.match(sql, /"id":"triple"/);
+  assert.match(sql, /"id":"direct_1rm"/);
+  // Пиковый сингл 107,5 кг убран: это 93,5% RMref, выше потолка Уровня 2.
+  assert.doesNotMatch(sql, /"exampleKg":\{"min":107\.5/);
+});
+
+
 test("canonical seed contains 22 cycles, 88 workouts and branch exercises", () => {
   const sql = read("migrations/012_seed_h2_v9_v2.sql");
   assert.equal((sql.match(/INSERT INTO cycles /g) ?? []).length, 22);

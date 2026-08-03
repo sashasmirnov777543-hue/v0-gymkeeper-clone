@@ -6,10 +6,10 @@ import type { ReadinessInput } from "./readiness.ts";
 import { dedupeOperationsById } from "./offline-dedup.ts";
 
 // Ключ кэша включает версию: клиенты со старой программой не подхватят чужие данные.
-const PROGRAM_KEY = "gym:program:h2-v9-2.0";
-const ACTIVE_PROGRAM_VERSION = "h2-v9-2.0";
+const PROGRAM_KEY = "gym:program:h2-v9-3.0";
+const ACTIVE_PROGRAM_VERSION = "h2-v9-3.0";
 /** Кэши прошлых редакций: удаляются при первом обращении к программе. */
-const STALE_PROGRAM_KEYS = ["gym:program:h2-v9-1.0"];
+const STALE_PROGRAM_KEYS = ["gym:program:h2-v9-1.0", "gym:program:h2-v9-2.0"];
 
 /** Убирает кэш прошлых редакций, чтобы клиент не показывал устаревший план. */
 function purgeStaleProgramCaches(): void {

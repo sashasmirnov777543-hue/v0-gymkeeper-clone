@@ -1,3 +1,4 @@
+import { ACTIVE_PROGRAM_VERSION } from "./version.ts";
 import type {
   NumericRange,
   ProgramCycle,
@@ -16,6 +17,78 @@ const EXPECTED_DAYS: Record<WorkoutSlot, 3 | 4 | 7 | 8> = {
 };
 // Редакция 2.0: шесть точек измерения (Ц1, Ц5, Ц9, Ц14, Ц20 и тест Ц22).
 const CHECKPOINT_CYCLES = new Set(["h2-1", "h2-5", "h2-9", "v9-5", "v9-11", "v9-13"]);
+
+/** Потолок самого высокого уровня допуска. Дальше него не заходит ни одна карточка. */
+const MAX_CLEARANCE_CEILING_PERCENT = 100;
+
+/** Роли, из которых складывается подпись главного жимового дня. */
+const BENCH_WORK_ROLES = new Set([
+  "primary_bench",
+  "primary_backoff",
+  "conditional_single",
+  "primer_single",
+]);
+
+/** Накопление усталости на каждый следующий подход — то же значение, что в генераторе. */
+const RPE_DRIFT_PER_SET = 0.35;
+
+/** Таблица Zourdos/Helms: %1ПМ по числу повторов и RPE от 6 до 10 с шагом 0,5. */
+const RPE_STEPS = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10] as const;
+const RPE_TABLE: Readonly<Record<number, readonly number[]>> = {
+  1: [86.3, 87.8, 89.2, 90.7, 92.2, 93.9, 95.5, 97.8, 100.0],
+  2: [83.7, 85.0, 86.3, 87.8, 89.2, 90.7, 92.2, 93.9, 95.5],
+  3: [81.1, 82.4, 83.7, 85.0, 86.3, 87.8, 89.2, 90.7, 92.2],
+  4: [78.6, 79.9, 81.1, 82.4, 83.7, 85.0, 86.3, 87.8, 89.2],
+  5: [76.2, 77.4, 78.6, 79.9, 81.1, 82.4, 83.7, 85.0, 86.3],
+};
+
+/** RPE первого подхода по фактическому проценту. null — ниже валидированной шкалы. */
+function firstSetRpe(reps: number, actualPercent: number): number | null {
+  const row = RPE_TABLE[reps];
+  if (!row || actualPercent < row[0]) return null;
+  for (let i = 0; i < row.length - 1; i += 1) {
+    const lo = row[i];
+    const hi = row[i + 1];
+    if (lo !== undefined && hi !== undefined && actualPercent >= lo && actualPercent <= hi) {
+      const step = RPE_STEPS[i];
+      const nextStep = RPE_STEPS[i + 1];
+      if (step === undefined || nextStep === undefined) return null;
+      return step + ((actualPercent - lo) / (hi - lo)) * (nextStep - step);
+    }
+  }
+  return 10;
+}
+
+/**
+ * Расхождение записанного targetRpe с независимым расчётом от веса на штанге.
+ * Возвращает описание проблемы или null, если всё сходится.
+ */
+function rpeMismatch(exercise: ProgramExercise, rmrefKg: number): string | null {
+  const kg = exercise.exampleKg?.min ?? null;
+  if (kg === null) return null;
+  const sets = Number.parseInt(exercise.sets, 10);
+  const reps = Number.parseInt(exercise.reps, 10);
+  if (!Number.isFinite(sets) || !Number.isFinite(reps) || !RPE_TABLE[reps]) return null;
+
+  const first = firstSetRpe(reps, (100 * kg) / rmrefKg);
+  if (first === null) {
+    return exercise.targetRpe
+      ? `set sits below the validated RPE scale but carries targetRpe ${exercise.targetRpe.min}–${exercise.targetRpe.max}`
+      : null;
+  }
+  if (!exercise.targetRpe || exercise.targetRpe.min === null || exercise.targetRpe.max === null) {
+    return `set sits inside the RPE scale but carries no target`;
+  }
+  const expectedFirst = Math.round(first * 10) / 10;
+  const expectedLast = Math.round((first + RPE_DRIFT_PER_SET * (sets - 1)) * 10) / 10;
+  if (
+    Math.abs(exercise.targetRpe.min - expectedFirst) > 0.06 ||
+    Math.abs(exercise.targetRpe.max - expectedLast) > 0.06
+  ) {
+    return `targetRpe ${exercise.targetRpe.min}–${exercise.targetRpe.max} disagrees with ${expectedFirst}–${expectedLast} recomputed from ${kg} kg`;
+  }
+  return null;
+}
 // Редакция 2.0: условные синглы только в B2 циклов V9-8, V9-10 и V9-12.
 const SINGLE_LOCATIONS = new Set(["v9-8-b2", "v9-10-b2", "v9-12-b2"]);
 // Роли, которые считаются соревновательным жимом при проверке «жим в обоих зальных днях».
@@ -74,7 +147,7 @@ export function validateProgram(program: ProgramDefinition): ProgramValidationRe
   let workoutCount = 0;
   let exerciseCount = 0;
 
-  if (program.version !== "h2-v9-2.0") errors.push("Unexpected program version");
+  if (program.version !== ACTIVE_PROGRAM_VERSION) errors.push("Unexpected program version");
   if (program.durationDays !== 176) errors.push("Program must contain 176 days");
   if (program.cycleLengthDays !== 8) errors.push("Cycle length must be 8 days");
   if (program.defaultRmrefKg !== 115) errors.push("Default RMref must be 115 kg");
@@ -179,6 +252,12 @@ export function validateProgram(program: ProgramDefinition): ProgramValidationRe
   }
 
   // Никакой плановый подход не выходит за RPE 8.
+  //
+  // В редакции 2.0 эта проверка не могла сработать никогда: генератор приводил
+  // значение к диапазону [4, 8] ПЕРЕД записью, и валидатор читал уже зажатое число.
+  // Три реальных превышения (v9-4, v9-7, v9-12) проходили её молча. Поэтому ниже
+  // добавлены проверки, которые зажимом обойти нельзя: RPE сверяется с независимым
+  // расчётом от фактического веса, а потолок допуска — с килограммами на штанге.
   for (const cycle of program.cycles) {
     for (const workout of cycle.workouts) {
       for (const exercise of workout.exercises) {
@@ -198,6 +277,64 @@ export function validateProgram(program: ProgramDefinition): ProgramValidationRe
         }
       }
     }
+  }
+
+  // Вес на штанге не выходит за потолок самого высокого уровня допуска.
+  // Подпись в процентах и округлённые килограммы — разные числа: 92,5% от 115 кг
+  // это 106,375, а на сетке 2,5 кг получается 107,5, то есть 93,5%.
+  const ceilingKg = (MAX_CLEARANCE_CEILING_PERCENT / 100) * program.defaultRmrefKg;
+  for (const cycle of program.cycles) {
+    for (const workout of cycle.workouts) {
+      for (const exercise of workout.exercises) {
+        const kg = exercise.exampleKg?.max ?? exercise.exampleKg?.min ?? null;
+        if (kg !== null && kg > ceilingKg + 1e-9) {
+          const actual = ((100 * kg) / program.defaultRmrefKg).toFixed(1);
+          errors.push(
+            `${exercise.id}: bar weight ${kg} kg is ${actual}% RMref, above the ${MAX_CLEARANCE_CEILING_PERCENT}% clearance ceiling`,
+          );
+        }
+      }
+    }
+  }
+
+  // Целевой RPE пересчитывается независимо — от веса на штанге, а не от подписи.
+  for (const cycle of program.cycles) {
+    for (const workout of cycle.workouts) {
+      for (const exercise of workout.exercises) {
+        const mismatch = rpeMismatch(exercise, program.defaultRmrefKg);
+        if (mismatch) errors.push(`${exercise.id}: ${mismatch}`);
+      }
+    }
+  }
+
+  // Ни один силовой цикл не повторяет штанговую работу другого целиком.
+  //
+  // Именно так редакция 2.0 теряла прогрессию: Ц12 дословно повторялся в Ц15,
+  // Ц13 — в Ц16, и самый тяжёлый многоповторный подход 148-го дня был легче,
+  // чем на 100-й день. Сравнивается цикл целиком, а не один зальный день:
+  // вводный и первый накопительный цикл законно делят топ-сет, пока растёт объём
+  // во втором зальном дне.
+  const seenBarbellWork = new Map<string, string>();
+  for (const cycle of program.cycles) {
+    if (cycle.block !== "v9") continue;
+    // Контрольные точки повторяют друг друга намеренно: замер обязан быть одинаковым.
+    if (cycle.checkpoint) continue;
+    const signature = cycle.workouts
+      .filter((workout) => workout.kind === "strength")
+      .map((workout) =>
+        `${workout.slot}:` +
+        workout.exercises
+          .filter((exercise) => BENCH_WORK_ROLES.has(exercise.role))
+          .map((exercise) => `${exercise.sets}x${exercise.reps}@${exercise.exampleKg?.min ?? "rpe8"}`)
+          .join(","),
+      )
+      .join("|");
+    if (!signature) continue;
+    const previous = seenBarbellWork.get(signature);
+    if (previous) {
+      errors.push(`${cycle.id} repeats the barbell work of ${previous} verbatim: ${signature}`);
+    }
+    seenBarbellWork.set(signature, cycle.id);
   }
 
   const v913b2 = getCycle(program, "v9-13")?.workouts.find(

@@ -36,6 +36,17 @@ export type ProgramExercise = Readonly<{
   optional: boolean;
   condition: string | null;
   excludeFromTonnage: boolean;
+  /**
+   * Подход лежит ниже валидированного диапазона шкалы RPE, поэтому числовой цели нет.
+   * Редакция 2.0 печатала здесь экстраполированные значения вплоть до отрицательных;
+   * 2.1 не печатает число там, где шкала не измеряла.
+   */
+  belowScale?: boolean;
+  /**
+   * Последний подход выполняется, только если предыдущий пришёл в целевой RPE:
+   * при консервативной оценке накопления усталости он выходит за RPE 8.
+   */
+  conditionalLastSet?: boolean;
   notes: readonly string[];
 }>;
 
@@ -87,7 +98,7 @@ export type ProgramCycle = Readonly<{
 }>;
 
 export type ProgramDefinition = Readonly<{
-  version: "h2-v9-2.0";
+  version: "h2-v9-3.0";
   source: Readonly<{
     title: string;
     revision: string;
