@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Активная версия программы. Держим в одном месте с lib/program/version.ts. */
+const ACTIVE_PROGRAM_VERSION = "h2-v9-3.0";
 const migrationDir = path.join(root, "migrations");
 const names = (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
 const sqlByName = new Map(
@@ -56,7 +59,17 @@ async function apply(db, selected) {
   }
 }
 
-async function verifyCanonicalCounts(db) {
+/**
+ * Счётчики канонической программы редакции 1.0 и состояние профиля.
+ *
+ * `expectedVersion` вынесен в параметр не для гибкости, а потому что раньше
+ * проверка была неверной: `freshDatabaseRun` переприменяет 009 и 010, а сид 1.0
+ * безусловно возвращает `program_state.program_version` к `h2-v9-1.0`. Проверка
+ * при этом ждала активную версию и падала на любой ветке — dry-run не проходил
+ * ни разу с момента перехода на редакцию 2.0. Смысл переприменения — убедиться,
+ * что счётчики не поехали, а не что версия осталась прежней.
+ */
+async function verifyCanonicalCounts(db, expectedVersion = ACTIVE_PROGRAM_VERSION) {
   const cycles = await scalar(
     db,
     "SELECT count(*)::int AS n FROM cycles WHERE program_version='h2-v9-1.0'",
@@ -81,7 +94,10 @@ async function verifyCanonicalCounts(db) {
   const state = await db.query(
     "SELECT program_version, current_program_day, rmref_kg::float8 AS rmref FROM program_state WHERE profile_key='primary'",
   );
-  assert(state.rows[0]?.program_version === "h2-v9-2.0", "program_state version mismatch");
+  assert(
+    state.rows[0]?.program_version === expectedVersion,
+    `program_state version mismatch: ожидалось ${expectedVersion}, получено ${state.rows[0]?.program_version}`,
+  );
   assert(Number(state.rows[0]?.current_program_day) === 1, "program_state day mismatch");
   assert(Number(state.rows[0]?.rmref) === 115, "program_state RMref mismatch");
   return { cycles, workouts, exercises };
@@ -91,9 +107,11 @@ async function freshDatabaseRun() {
   const db = new PGlite();
   await apply(db, names);
   const first = await verifyCanonicalCounts(db);
+  // Переприменение сида 1.0 возвращает program_state к своей версии — это его работа.
+  // Проверяем, что от повтора не изменились счётчики.
   await db.exec(sqlByName.get("009_h2_v9_v1_schema.sql"));
   await db.exec(sqlByName.get("010_seed_h2_v9_v1.sql"));
-  const second = await verifyCanonicalCounts(db);
+  const second = await verifyCanonicalCounts(db, "h2-v9-1.0");
   assert(JSON.stringify(first) === JSON.stringify(second), "Direct reapply changed canonical counts");
   await db.close();
   return first;

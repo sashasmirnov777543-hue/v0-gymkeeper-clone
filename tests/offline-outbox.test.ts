@@ -39,16 +39,27 @@ Object.defineProperty(globalThis, "window", {
 test("versioned program cache rejects stale data", () => {
   storage.clear();
   cacheProgram({
-    programVersion: "h2-v9-2.0",
+    programVersion: "h2-v9-3.0",
     cycles: [],
     lastSetsByName: {},
   });
-  assert.equal(loadProgram()?.programVersion, "h2-v9-2.0");
+  assert.equal(loadProgram()?.programVersion, "h2-v9-3.0");
   storage.setItem(
-    "gym:program:h2-v9-2.0",
-    JSON.stringify({ programVersion: "h2-v9-1.0", cachedAt: new Date().toISOString() }),
+    "gym:program:h2-v9-3.0",
+    JSON.stringify({ programVersion: "h2-v9-2.0", cachedAt: new Date().toISOString() }),
   );
   assert.equal(loadProgram(), null);
+});
+
+
+test("кэш прошлых редакций вычищается, а не просто игнорируется", () => {
+  // Редакция 2.0 объявляла кэш 1.0 устаревшим, но фактически его не удаляла.
+  storage.clear();
+  storage.setItem("gym:program:h2-v9-1.0", JSON.stringify({ programVersion: "h2-v9-1.0" }));
+  storage.setItem("gym:program:h2-v9-2.0", JSON.stringify({ programVersion: "h2-v9-2.0" }));
+  loadProgram();
+  assert.equal(storage.getItem("gym:program:h2-v9-1.0"), null);
+  assert.equal(storage.getItem("gym:program:h2-v9-2.0"), null);
 });
 
 

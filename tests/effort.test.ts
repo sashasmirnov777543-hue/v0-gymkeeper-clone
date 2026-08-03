@@ -8,13 +8,22 @@ import {
 } from "../lib/effort.ts";
 
 test("наблюдаемые события покрывают шкалу усилия без разрывов", () => {
-  assert.equal(LAST_REP_OBSERVATIONS.length, 4);
+  assert.equal(LAST_REP_OBSERVATIONS.length, 5);
   const rpes = LAST_REP_OBSERVATIONS.map((item) => item.rpe);
   // Строго возрастают: каждое следующее событие тяжелее предыдущего.
   assert.deepEqual(rpes, [...rpes].sort((a, b) => a - b));
   assert.equal(new Set(rpes).size, rpes.length);
   // Ни одно событие не выходит за потолок программы, кроме «дожимал» — оно и означает превышение.
-  assert.ok(rpes.filter((value) => value <= 8).length === 3);
+  assert.ok(rpes.filter((value) => value <= 8).length === 4);
+});
+
+test("шкала достаёт до лёгких подходов разгрузочных циклов", () => {
+  // В редакции 2.0 минимумом было RPE 6, и попадание в цель разгрузки
+  // записать было нечем: любой лёгкий подход выглядел тяжелее плана.
+  assert.equal(Math.min(...LAST_REP_OBSERVATIONS.map((item) => item.rpe)), 4);
+  assert.equal(observationFromRpe(4), "effortless");
+  assert.equal(observationFromRpe(4.5), "effortless");
+  assert.equal(effortOption("effortless").velocity, "fast");
 });
 
 test("целевое событие программы — залипание без дожима", () => {
@@ -27,6 +36,7 @@ test("целевое событие программы — залипание б
 test("обратное соответствие RPE в событие однозначно", () => {
   assert.equal(observationFromRpe(null), null);
   assert.equal(observationFromRpe(5), "same_speed");
+  assert.equal(observationFromRpe(4), "effortless");
   assert.equal(observationFromRpe(6), "same_speed");
   assert.equal(observationFromRpe(7), "slower");
   assert.equal(observationFromRpe(7.5), "slower");

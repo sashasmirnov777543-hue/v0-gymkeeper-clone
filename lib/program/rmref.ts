@@ -20,6 +20,20 @@ export const STANDARD_TRIPLE_RPE8_FACTOR = 0.863;
 
 /** Максимальное изменение RMref за одну контрольную точку, в любую сторону. */
 export const RMREF_MAX_STEP_KG = 5;
+
+/**
+ * Базовый замер — единственная точка без коридора ±5 кг.
+ *
+ * Редакция 2.0 применяла коридор ко всем шести точкам, включая первую. Но коридор нужен,
+ * чтобы шум одного замера не раскачивал уже подтверждённую базу; у базового замера
+ * раскачивать нечего — он и есть база, а стартовые 115 кг до него лишь предположение.
+ * При расхождении в 10 кг исправление растягивалось до 68-го дня, и всё это время
+ * циклы 2–4, подписанные «72,5%», шли фактически на 79%.
+ */
+export const BASELINE_CHECKPOINT: RmrefCheckpoint = "h2-1";
+export function checkpointAllowsUnboundedStep(checkpoint: string): boolean {
+  return checkpoint === BASELINE_CHECKPOINT;
+}
 export type RmrefCheckpoint = (typeof RMREF_CHECKPOINTS)[number];
 
 const EPSILON = 1e-9;
@@ -131,8 +145,10 @@ export function reviewRmrefUpdate(input: RmrefReviewInput): RmrefReviewDecision 
     reasons.push("invalid-proposed-rmref");
   }
   const delta = input.proposedRmrefKg - input.currentRmrefKg;
-  // Редакция 2.0: снижение разрешено наравне с повышением. Коридор ±5 кг за точку.
-  if (Math.abs(delta) > RMREF_MAX_STEP_KG + EPSILON) {
+  // Снижение разрешено наравне с повышением. Коридор ±5 кг за точку —
+  // кроме базового замера, который задаёт базу с нуля.
+  const unbounded = checkpointAllowsUnboundedStep(input.checkpoint);
+  if (!unbounded && Math.abs(delta) > RMREF_MAX_STEP_KG + EPSILON) {
     reasons.push("change-exceeds-5-kg");
   }
   if (

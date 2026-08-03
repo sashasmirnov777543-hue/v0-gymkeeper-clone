@@ -41,7 +41,7 @@ export async function GET() {
         {
           format: BACKUP_FORMAT,
           version: BACKUP_VERSION,
-          programVersion: "h2-v9-2.0",
+          programVersion: "h2-v9-3.0",
           exportedAt,
           tables,
         },
