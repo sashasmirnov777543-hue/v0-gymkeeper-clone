@@ -15,9 +15,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { HeartRateBadge } from "@/components/heart-rate";
 import { useHeartRate, useWakeLock, averageBpmSince } from "@/lib/heart-rate";
-import { finishCardioSession } from "@/app/actions/workout";
+import { cancelSession, finishCardioSession } from "@/app/actions/workout";
 import { unlockAudio } from "@/lib/sound";
-import { finishLocalCardioSession, pushOp } from "@/lib/offline";
+import { cancelLocalSession, finishLocalCardioSession, pushOp } from "@/lib/offline";
 import {
   elapsedSeconds,
   pauseClock,
@@ -245,6 +245,36 @@ export function CardioSession({
     window.setTimeout(() => router.push("/history"), 700);
   }
 
+  /**
+   * Отмена кардио-сессии.
+   *
+   * Кнопки не было вовсе: силовая сессия давала её всегда, кардио — никогда,
+   * и начатую по ошибке сессию нельзя было убрать. Хуже того, на красном статусе
+   * скрывалась вся нижняя панель целиком, поэтому сессия, начатая до появления
+   * стоп-сигнала, оставалась активной навсегда.
+   */
+  async function cancel() {
+    if (!window.confirm("Отменить кардио-тренировку? Записанное время и параметры будут удалены.")) {
+      return;
+    }
+    localStorage.removeItem(key);
+    if (typeof session.id === "string") {
+      cancelLocalSession(session.id);
+      router.push("/");
+      return;
+    }
+    try {
+      await cancelSession(session.id);
+    } catch (error) {
+      if (!navigator.onLine || error instanceof TypeError) {
+        pushOp({ kind: "cancel", sessionRef: session.id });
+        router.push("/");
+      } else {
+        setSaveState("error");
+      }
+    }
+  }
+
   return (
     <main className="mx-auto min-h-dvh w-full max-w-lg pb-48">
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -320,16 +350,23 @@ export function CardioSession({
         )}
       </div>
 
-      {!readOnly && !blocked && (
+      {!readOnly && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 p-3">
-          <div className="mx-auto flex max-w-lg gap-3">
-            <Button variant="outline" className="flex-1" onClick={toggle}>
-              {running ? <><Pause /> Пауза</> : <><Play /> {elapsed > 0 ? "Продолжить" : "Старт"}</>}
-            </Button>
-            <Button className="flex-[2]" onClick={finish} disabled={elapsed === 0}>
-              <Square /> Завершить кардио
-            </Button>
-          </div>
+          {/* Управление таймером скрыто на красном статусе, отмена — нет:
+              иначе начатую сессию нечем закрыть. */}
+          {!blocked && (
+            <div className="mx-auto flex max-w-lg gap-3">
+              <Button variant="outline" className="flex-1" onClick={toggle}>
+                {running ? <><Pause /> Пауза</> : <><Play /> {elapsed > 0 ? "Продолжить" : "Старт"}</>}
+              </Button>
+              <Button className="flex-[2]" onClick={finish} disabled={elapsed === 0}>
+                <Square /> Завершить кардио
+              </Button>
+            </div>
+          )}
+          <button type="button" onClick={cancel} className="mx-auto mt-2 block w-full max-w-lg text-center text-xs text-muted-foreground hover:text-destructive">
+            Отменить тренировку
+          </button>
         </div>
       )}
     </main>
