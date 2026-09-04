@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { NotebookPen } from "lucide-react"
 import { saveSessionNotes } from "@/app/actions/workout"
 
@@ -20,9 +20,12 @@ export function SessionNotes({
   const [value, setValue] = useState(initialNotes ?? "")
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle")
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // последний введённый текст — на случай ухода со страницы до истечения дебаунса
+  const latestRef = useRef(value)
 
   const onChange = (next: string) => {
     setValue(next)
+    latestRef.current = next
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(async () => {
       setStatus("saving")
@@ -36,6 +39,16 @@ export function SessionNotes({
       }
     }, 800)
   }
+
+  // завершение тренировки или уход со страницы в окне дебаунса не должен терять заметку
+  useEffect(() => {
+    return () => {
+      if (timer.current != null) {
+        clearTimeout(timer.current)
+        void saveSessionNotes(sessionId, latestRef.current).catch(() => {})
+      }
+    }
+  }, [sessionId])
 
   if (readOnly && !value) return null
 

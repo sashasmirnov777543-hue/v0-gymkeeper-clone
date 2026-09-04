@@ -79,7 +79,7 @@ function LoginForm() {
 
         <form className="mt-5 space-y-3" onSubmit={submit}>
           <label className="block text-sm font-medium" htmlFor="username">Имя пользователя</label>
-          <input id="username" autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} className="h-12 w-full rounded-lg border border-input bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Личный логин" />
+          <input id="username" autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} onInput={(event) => event.currentTarget.setCustomValidity("")} onInvalid={(event) => event.currentTarget.setCustomValidity("Заполните имя пользователя")} className="h-12 w-full rounded-lg border border-input bg-background px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Личный логин" />
           <label className="block text-sm font-medium" htmlFor="password">
             Пароль
           </label>
@@ -93,6 +93,8 @@ function LoginForm() {
               autoFocus
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              onInput={(event) => event.currentTarget.setCustomValidity("")}
+              onInvalid={(event) => event.currentTarget.setCustomValidity("Заполните пароль")}
               className="h-12 w-full rounded-lg border border-input bg-background pl-10 pr-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="Пароль приложения"
             />
