@@ -138,24 +138,35 @@ export async function reviewBase(form: FormData) {
       : [];
     const evidence: BaseEvidence[] = [];
     // The older comparable control must actually precede the selected control.
-    const priorControls = await tx
-      .select({ set: loggedSets, session: sessions })
-      .from(loggedSets)
-      .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
-      .innerJoin(
-        workoutExercises,
-        eq(loggedSets.workoutExerciseId, workoutExercises.id),
-      )
-      .where(
-        and(
-          eq(sessions.status, "completed"),
-          eq(sessions.programVersion, ACTIVE_PROGRAM_VERSION),
-          eq(loggedSets.isWarmup, false),
-          inArray(workoutExercises.role, ["calibration", "test_triple"]),
-        ),
-      )
-      .orderBy(desc(sessions.startedAt))
-      .limit(30);
+    // numeric-колонки приходят строками — приводим к числам один раз здесь,
+    // чтобы set соответствовал EffortSet (как в rows ниже).
+    const priorControls = (
+      await tx
+        .select({ set: loggedSets, session: sessions })
+        .from(loggedSets)
+        .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
+        .innerJoin(
+          workoutExercises,
+          eq(loggedSets.workoutExerciseId, workoutExercises.id),
+        )
+        .where(
+          and(
+            eq(sessions.status, "completed"),
+            eq(sessions.programVersion, ACTIVE_PROGRAM_VERSION),
+            eq(loggedSets.isWarmup, false),
+            inArray(workoutExercises.role, ["calibration", "test_triple"]),
+          ),
+        )
+        .orderBy(desc(sessions.startedAt))
+        .limit(30)
+    ).map((p) => ({
+      ...p,
+      set: {
+        ...p.set,
+        weight: p.set.weight == null ? null : Number(p.set.weight),
+        rpe: p.set.rpe == null ? null : Number(p.set.rpe),
+      },
+    }));
     for (const session of selected) {
       const snapshot = readSnapshot(session.adaptationPlan);
       if (!snapshot || snapshot.baseKg !== current) continue;

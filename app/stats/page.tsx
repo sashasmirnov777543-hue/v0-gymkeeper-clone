@@ -112,7 +112,11 @@ export default async function StatsPage() {
       row.exerciseName,
       Number(row.weight ?? 0),
       row.reps ?? 0,
-      { ...row, rpe: row.rpe == null ? null : Number(row.rpe) },
+      {
+        ...row,
+        weight: row.weight == null ? null : Number(row.weight),
+        rpe: row.rpe == null ? null : Number(row.rpe),
+      },
     ),
   }));
   const tripleE1rm = comparable.find((row) => row.index != null)?.index ?? null;

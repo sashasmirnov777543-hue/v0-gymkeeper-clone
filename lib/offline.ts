@@ -306,7 +306,7 @@ function getLocalSessions(): Record<string, LocalSession> {
 function setLocalSessions(map: Record<string, LocalSession>) {
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(map));
 }
-export function getLocalSession(key: string) {
+export function getLocalSession(key: string): LocalSession | null {
   return getLocalSessions()[key] ?? null;
 }
 export function findLocalSession(workoutId: number): string | null {
