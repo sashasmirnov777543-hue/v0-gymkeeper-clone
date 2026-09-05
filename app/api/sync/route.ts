@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/require-auth";
+import {
+  createStartSnapshot,
+  guardSet,
+  updateSafetyFromFacts,
+  validateSetNumbers,
+} from "@/lib/program/server";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { ensureSchema } from "@/lib/db/migrate";
@@ -22,6 +29,14 @@ type OpPayload =
       workoutId: number;
       startedAt: string;
       readiness?: ReadinessInput;
+      startChecks?: {
+        branch?: "triple" | "direct_1rm";
+        spotterPresent?: boolean;
+        safetiesSet?: boolean;
+        readinessReviewed?: boolean;
+      };
+      programVersion?: string;
+      reportedBaseKg?: number;
     }
   | {
       kind: "set";
@@ -32,7 +47,7 @@ type OpPayload =
       reps: number | null;
       rir: number | null;
       rpe: number | null;
-      velocity: "fast" | "normal" | "slow";
+      velocity: "fast" | "normal" | "slow" | null;
       stickingPoint: "chest" | "middle" | "lockout" | null;
       isWarmup?: boolean;
       pauseQuality?: string | null;
@@ -69,8 +84,9 @@ type OpPayload =
       warmupMinutes?: number | null;
       mainMinutes?: number | null;
       cooldownMinutes?: number | null;
-      cardioRpe: number;
-      cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
+      supportLog?: { completedIds: number[]; mode: number };
+      cardioRpe: number | null;
+      cardioTalkTest: "full_sentences" | "short_phrases" | "difficult" | null;
       cardioSymptoms: string | null;
     }
   | { kind: "cancel"; sessionRef: number | string }
@@ -82,12 +98,23 @@ type StoredResult = {
   sessionId?: number;
   setId?: number;
   skipped?: boolean;
+  localKey?: string;
 };
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(req: Request) {
+  try {
+    await requireAuth();
+  } catch {
+    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
+  }
+  if (Number(req.headers.get("content-length") ?? 0) > 2000000)
+    return NextResponse.json(
+      { error: "Слишком большой пакет" },
+      { status: 413 },
+    );
   await ensureSchema();
 
   let ops: Op[];
@@ -99,13 +126,25 @@ export async function POST(req: Request) {
   }
 
   if (ops.length > 200) {
-    return NextResponse.json({ error: "Слишком много операций" }, { status: 413 });
+    return NextResponse.json(
+      { error: "Слишком много операций" },
+      { status: 413 },
+    );
   }
 
   if (
     ops.some(
       (op) =>
         !op ||
+        ![
+          "start",
+          "set",
+          "updateSet",
+          "finish",
+          "cardioFinish",
+          "cancel",
+          "deleteSet",
+        ].includes(op.kind) ||
         typeof op.operationId !== "string" ||
         !UUID_RE.test(op.operationId),
     )
@@ -133,8 +172,24 @@ export async function POST(req: Request) {
     replayed: boolean;
   }> = [];
 
-  const resolveRef = (ref: number | string): number | null =>
-    typeof ref === "number" ? ref : (sessionMap.get(ref) ?? null);
+  const resolveRef = async (
+    ref: number | string,
+    store: Pick<typeof db, "select"> = db,
+  ): Promise<number | null> => {
+    if (typeof ref === "number")
+      return Number.isInteger(ref) && ref > 0 ? ref : null;
+    const mapped = sessionMap.get(ref);
+    if (mapped) return mapped;
+    const [receipt] = await store
+      .select({ result: syncOps.result })
+      .from(syncOps)
+      .where(
+        sql`${syncOps.result}->>'localKey'=${ref} AND ${syncOps.result}->>'kind'='start'`,
+      )
+      .limit(1);
+    const id = (receipt?.result as StoredResult | undefined)?.sessionId;
+    return id ?? null;
+  };
 
   for (const op of ops) {
     const processed = await db.transaction(async (tx) => {
@@ -150,7 +205,20 @@ export async function POST(req: Request) {
         .where(eq(syncOps.operationId, op.operationId))
         .limit(1);
       if (stored) {
-        return { result: stored.result as StoredResult, replayed: true };
+        const prior = stored.result as StoredResult;
+        if (prior.kind !== op.kind)
+          throw new Error(
+            "Этот номер операции уже использован для другого действия.",
+          );
+        if (op.kind === "start" && !prior.localKey) {
+          const result = { ...prior, localKey: op.localKey };
+          await tx
+            .update(syncOps)
+            .set({ result })
+            .where(eq(syncOps.operationId, op.operationId));
+          return { result, replayed: true };
+        }
+        return { result: prior, replayed: true };
       }
 
       let result: StoredResult;
@@ -160,24 +228,45 @@ export async function POST(req: Request) {
             result = { kind: "start", skipped: true };
             break;
           }
-          if (!op.readiness) throw new Error("Для старта нужна проверка готовности");
+          if (!op.readiness)
+            throw new Error("Для старта нужна проверка готовности");
           const assessment = assessReadiness(op.readiness);
           if (assessment.level === "red") {
             throw new Error("Красный статус блокирует тренировку и разминку");
           }
-          const [program] = await tx
-            .select({ programVersion: cycles.programVersion })
-            .from(workouts)
-            .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
-            .where(eq(workouts.id, op.workoutId))
-            .limit(1);
+          const prepared = await createStartSnapshot(
+            op.workoutId,
+            op.readiness,
+            op.startChecks,
+            tx,
+            true,
+          );
+          if (op.programVersion && op.programVersion !== prepared.version)
+            throw new Error(
+              "Версия локальной сессии не соответствует её тренировке.",
+            );
+          const reportedBase =
+            typeof op.reportedBaseKg === "number" &&
+            Number.isFinite(op.reportedBaseKg) &&
+            op.reportedBaseKg > 0 &&
+            op.reportedBaseKg <= 500
+              ? op.reportedBaseKg
+              : prepared.snapshot?.baseKg;
+          const snapshot = prepared.snapshot
+            ? {
+                ...prepared.snapshot,
+                baseKg: reportedBase ?? prepared.snapshot.baseKg,
+                importedOffline: true,
+              }
+            : null;
           const inserted = await tx
             .insert(sessions)
             .values({
               workoutId: op.workoutId,
               startedAt: new Date(op.startedAt),
               status: "active",
-              programVersion: program?.programVersion ?? "h2-v9-1.0",
+              programVersion: prepared.version,
+              testBranch: prepared.branch,
               sleepMinutes: op.readiness.sleepMinutes,
               sleepQuality: op.readiness.sleepQuality,
               shoulderPain: op.readiness.shoulderPain,
@@ -185,12 +274,17 @@ export async function POST(req: Request) {
               energy: op.readiness.energy,
               morningPulseDelta:
                 op.readiness.restingHeartRateTrend?.deltaFromBaselineBpm != null
-                  ? Math.round(op.readiness.restingHeartRateTrend.deltaFromBaselineBpm)
+                  ? Math.round(
+                      op.readiness.restingHeartRateTrend.deltaFromBaselineBpm,
+                    )
                   : null,
               readinessLevel: assessment.level,
               readinessInput: op.readiness,
               readinessReasons: assessment.reasonCodes,
-              adaptationPlan: assessment.permittedAction,
+              adaptationPlan: {
+                readiness: assessment.permittedAction,
+                revision30: snapshot,
+              },
               redFlags: op.readiness.clinicalStopFlags ?? {},
             })
             .onConflictDoNothing()
@@ -208,17 +302,24 @@ export async function POST(req: Request) {
             )[0]?.id;
           if (sessionId == null)
             throw new Error("Не удалось создать или найти активную сессию");
-          result = { kind: "start", sessionId };
+          result = { kind: "start", sessionId, localKey: op.localKey };
           break;
         }
         case "set": {
-          const sessionId = resolveRef(op.sessionRef);
+          const sessionId = await resolveRef(op.sessionRef, tx);
           if (sessionId == null) {
+            if (
+              typeof op.sessionRef !== "string" ||
+              !cancelledLocal.has(op.sessionRef)
+            )
+              throw new Error(
+                "Не найдена исходная сессия. Операции остаются в очереди.",
+              );
             result = { kind: "set", skipped: true };
             break;
           }
-          const [valid] = await tx.select({id:sessions.id}).from(sessions).innerJoin(workouts,eq(sessions.workoutId,workouts.id)).innerJoin(workoutExercises,eq(workoutExercises.workoutId,workouts.id)).where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active' and ${sessions.safetyStopped}=false and ${workoutExercises.id}=${op.workoutExerciseId}`).limit(1);
-          if(!valid) throw new Error("Подход не принадлежит активной сессии");
+          validateSetNumbers(op);
+          await guardSet(tx, sessionId, op.workoutExerciseId, op, true);
           const [inserted] = await tx
             .insert(loggedSets)
             .values({
@@ -243,7 +344,11 @@ export async function POST(req: Request) {
             .returning({ id: loggedSets.id });
           if (
             op.symptoms?.some((value) =>
-              ["medical_symptom", "pain_changes_movement", "unsafe_loss_of_control"].includes(value),
+              [
+                "medical_symptom",
+                "pain_changes_movement",
+                "unsafe_loss_of_control",
+              ].includes(value),
             )
           ) {
             await tx
@@ -251,18 +356,29 @@ export async function POST(req: Request) {
               .set({ safetyStopped: true })
               .where(eq(sessions.id, sessionId));
           }
+          await updateSafetyFromFacts(tx, sessionId);
           result = { kind: "set", sessionId, setId: inserted.id };
           break;
         }
         case "updateSet": {
-          const sessionId = resolveRef(op.sessionRef);
+          validateSetNumbers(op);
+          const sessionId = await resolveRef(op.sessionRef, tx);
           if (sessionId == null) {
+            if (
+              typeof op.sessionRef !== "string" ||
+              !cancelledLocal.has(op.sessionRef)
+            )
+              throw new Error(
+                "Не найдена исходная сессия. Операции остаются в очереди.",
+              );
             result = { kind: "updateSet", skipped: true };
             break;
           }
           if (
-            (op.rpe != null && (!Number.isFinite(op.rpe) || op.rpe < 0 || op.rpe > 10)) ||
-            (op.rir != null && (!Number.isInteger(op.rir) || op.rir < 0 || op.rir > 10))
+            (op.rpe != null &&
+              (!Number.isFinite(op.rpe) || op.rpe < 0 || op.rpe > 10)) ||
+            (op.rir != null &&
+              (!Number.isInteger(op.rir) || op.rir < 0 || op.rir > 10))
           ) {
             throw new Error("Некорректные RPE/RIR");
           }
@@ -278,30 +394,48 @@ export async function POST(req: Request) {
               sql`${loggedSets.id}=${op.setId} and ${loggedSets.sessionId}=${sessionId} and exists (select 1 from sessions where ${sessions.id}=${sessionId} and ${sessions.status}='active')`,
             )
             .returning({ id: loggedSets.id });
-          if (!updated.length) throw new Error("Подход не принадлежит активной сессии");
+          if (!updated.length)
+            throw new Error("Подход не принадлежит активной сессии");
+          await updateSafetyFromFacts(tx, sessionId);
           result = { kind: "updateSet", sessionId, setId: op.setId };
           break;
         }
         case "finish": {
-          const sessionId = resolveRef(op.sessionRef);
+          const sessionId = await resolveRef(op.sessionRef, tx);
           if (sessionId == null) {
+            if (
+              typeof op.sessionRef !== "string" ||
+              !cancelledLocal.has(op.sessionRef)
+            )
+              throw new Error(
+                "Не найдена исходная сессия. Операции остаются в очереди.",
+              );
             result = { kind: "finish", skipped: true };
             break;
           }
           const completed = await tx
             .update(sessions)
             .set({ status: "completed", finishedAt: new Date(op.finishedAt) })
-            .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`)
+            .where(
+              sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`,
+            )
             .returning({ workoutId: sessions.workoutId });
-          if (!completed.length) throw new Error("Сессия уже завершена или не найдена");
+          if (!completed.length)
+            throw new Error("Сессия уже завершена или не найдена");
           const [position] = await tx
-            .select({ dayOffset: cycles.dayOffset, dayInCycle: workouts.dayInCycle })
+            .select({
+              dayOffset: cycles.dayOffset,
+              dayInCycle: workouts.dayInCycle,
+            })
             .from(workouts)
             .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
             .where(eq(workouts.id, completed[0].workoutId))
             .limit(1);
           if (position?.dayOffset != null && position.dayInCycle != null) {
-            const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+            const nextDay = Math.min(
+              176,
+              position.dayOffset + position.dayInCycle + 1,
+            );
             await tx
               .update(programState)
               .set({
@@ -314,8 +448,25 @@ export async function POST(req: Request) {
           break;
         }
         case "cardioFinish": {
-          const sessionId = resolveRef(op.sessionRef);
+          if (
+            !Number.isFinite(op.durationSeconds) ||
+            op.durationSeconds < 0 ||
+            op.durationSeconds > 86400 ||
+            (op.cardioRpe != null &&
+              (!Number.isFinite(op.cardioRpe) ||
+                op.cardioRpe < 0 ||
+                op.cardioRpe > 10))
+          )
+            throw new Error("Некорректные фактические параметры кардио.");
+          const sessionId = await resolveRef(op.sessionRef, tx);
           if (sessionId == null) {
+            if (
+              typeof op.sessionRef !== "string" ||
+              !cancelledLocal.has(op.sessionRef)
+            )
+              throw new Error(
+                "Не найдена исходная сессия. Операции остаются в очереди.",
+              );
             result = { kind: "cardioFinish", skipped: true };
             break;
           }
@@ -335,18 +486,28 @@ export async function POST(req: Request) {
               cardioRpe: op.cardioRpe,
               cardioTalkTest: op.cardioTalkTest,
               cardioSymptoms: op.cardioSymptoms,
+              supportLog: op.supportLog ?? null,
             })
-            .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`)
+            .where(
+              sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`,
+            )
             .returning({ workoutId: sessions.workoutId });
-          if (!completed.length) throw new Error("Кардио уже завершено или не найдено");
+          if (!completed.length)
+            throw new Error("Кардио уже завершено или не найдено");
           const [position] = await tx
-            .select({ dayOffset: cycles.dayOffset, dayInCycle: workouts.dayInCycle })
+            .select({
+              dayOffset: cycles.dayOffset,
+              dayInCycle: workouts.dayInCycle,
+            })
             .from(workouts)
             .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
             .where(eq(workouts.id, completed[0].workoutId))
             .limit(1);
           if (position?.dayOffset != null && position.dayInCycle != null) {
-            const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+            const nextDay = Math.min(
+              176,
+              position.dayOffset + position.dayInCycle + 1,
+            );
             await tx
               .update(programState)
               .set({
@@ -359,18 +520,25 @@ export async function POST(req: Request) {
           break;
         }
         case "cancel": {
-          const sessionId = resolveRef(op.sessionRef);
+          const sessionId = await resolveRef(op.sessionRef, tx);
           if (sessionId != null) {
             const [active] = await tx
               .select({ id: sessions.id })
               .from(sessions)
-              .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`)
+              .where(
+                sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`,
+              )
               .limit(1);
-            if (!active) throw new Error("Можно отменить только активную сессию");
-            await tx.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId));
+            if (!active)
+              throw new Error("Можно отменить только активную сессию");
+            await tx
+              .delete(loggedSets)
+              .where(eq(loggedSets.sessionId, sessionId));
             await tx
               .delete(sessions)
-              .where(sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`);
+              .where(
+                sql`${sessions.id}=${sessionId} and ${sessions.status}='active'`,
+              );
           }
           result = {
             kind: "cancel",
@@ -380,7 +548,14 @@ export async function POST(req: Request) {
           break;
         }
         case "deleteSet": {
-          await tx.delete(loggedSets).where(eq(loggedSets.id, op.setId));
+          const removed = await tx
+            .delete(loggedSets)
+            .where(
+              sql`${loggedSets.id}=${op.setId} AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=${loggedSets.sessionId} AND s.status='active')`,
+            )
+            .returning({ id: loggedSets.id });
+          if (!removed.length)
+            throw new Error("Можно удалить только подход активной сессии.");
           result = { kind: "deleteSet", setId: op.setId };
           break;
         }

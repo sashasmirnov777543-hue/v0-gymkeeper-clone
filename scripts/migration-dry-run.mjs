@@ -4,11 +4,19 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Активная версия программы. Держим в одном месте с lib/program/version.ts. */
+const ACTIVE_PROGRAM_VERSION = "h2-v9-4.0";
 const migrationDir = path.join(root, "migrations");
-const names = (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
+const names = (await fs.readdir(migrationDir))
+  .filter((name) => name.endsWith(".sql"))
+  .sort();
 const sqlByName = new Map(
   await Promise.all(
-    names.map(async (name) => [name, await fs.readFile(path.join(migrationDir, name), "utf8")]),
+    names.map(async (name) => [
+      name,
+      await fs.readFile(path.join(migrationDir, name), "utf8"),
+    ]),
   ),
 );
 const BACKUP_TABLES = [
@@ -52,11 +60,26 @@ async function apply(db, selected) {
     await db.exec("COMMIT");
   } catch (error) {
     await db.exec("ROLLBACK").catch(() => {});
-    throw new Error(`Migration failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Migration failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
-async function verifyCanonicalCounts(db) {
+/**
+ * Счётчики канонической программы редакции 1.0 и состояние профиля.
+ *
+ * `expectedVersion` вынесен в параметр не для гибкости, а потому что раньше
+ * проверка была неверной: `freshDatabaseRun` переприменяет 009 и 010, а сид 1.0
+ * безусловно возвращает `program_state.program_version` к `h2-v9-1.0`. Проверка
+ * при этом ждала активную версию и падала на любой ветке — dry-run не проходил
+ * ни разу с момента перехода на редакцию 2.0. Смысл переприменения — убедиться,
+ * что счётчики не поехали, а не что версия осталась прежней.
+ */
+async function verifyCanonicalCounts(
+  db,
+  expectedVersion = ACTIVE_PROGRAM_VERSION,
+) {
   const cycles = await scalar(
     db,
     "SELECT count(*)::int AS n FROM cycles WHERE program_version='h2-v9-1.0'",
@@ -77,12 +100,21 @@ async function verifyCanonicalCounts(db) {
   );
   assert(cycles === 22, `Expected 22 canonical cycles, got ${cycles}`);
   assert(workouts === 88, `Expected 88 canonical workouts, got ${workouts}`);
-  assert(exercises === 294, `Expected 294 canonical exercise rows, got ${exercises}`);
+  assert(
+    exercises === 294,
+    `Expected 294 canonical exercise rows, got ${exercises}`,
+  );
   const state = await db.query(
     "SELECT program_version, current_program_day, rmref_kg::float8 AS rmref FROM program_state WHERE profile_key='primary'",
   );
-  assert(state.rows[0]?.program_version === "h2-v9-1.0", "program_state version mismatch");
-  assert(Number(state.rows[0]?.current_program_day) === 1, "program_state day mismatch");
+  assert(
+    state.rows[0]?.program_version === expectedVersion,
+    `program_state version mismatch: ожидалось ${expectedVersion}, получено ${state.rows[0]?.program_version}`,
+  );
+  assert(
+    Number(state.rows[0]?.current_program_day) === 1,
+    "program_state day mismatch",
+  );
   assert(Number(state.rows[0]?.rmref) === 115, "program_state RMref mismatch");
   return { cycles, workouts, exercises };
 }
@@ -91,17 +123,24 @@ async function freshDatabaseRun() {
   const db = new PGlite();
   await apply(db, names);
   const first = await verifyCanonicalCounts(db);
+  // Переприменение сида 1.0 возвращает program_state к своей версии — это его работа.
+  // Проверяем, что от повтора не изменились счётчики.
   await db.exec(sqlByName.get("009_h2_v9_v1_schema.sql"));
   await db.exec(sqlByName.get("010_seed_h2_v9_v1.sql"));
-  const second = await verifyCanonicalCounts(db);
-  assert(JSON.stringify(first) === JSON.stringify(second), "Direct reapply changed canonical counts");
+  const second = await verifyCanonicalCounts(db, "h2-v9-1.0");
+  assert(
+    JSON.stringify(first) === JSON.stringify(second),
+    "Direct reapply changed canonical counts",
+  );
   await db.close();
   return first;
 }
 
 async function populatedLegacyRun() {
   const db = new PGlite();
-  const legacyMigrations = names.filter((name) => name < "009_h2_v9_v1_schema.sql");
+  const legacyMigrations = names.filter(
+    (name) => name < "009_h2_v9_v1_schema.sql",
+  );
   await apply(db, legacyMigrations);
   const legacyCycle = await db.query(
     `INSERT INTO cycles(number,name,macrocycle,notes,sort_order,block)
@@ -126,7 +165,10 @@ async function populatedLegacyRun() {
      VALUES($1,$2,1,50,5,3)`,
     [legacySession.rows[0].id, legacyExercise.rows[0].id],
   );
-  await apply(db, names.filter((name) => name >= "009_h2_v9_v1_schema.sql"));
+  await apply(
+    db,
+    names.filter((name) => name >= "009_h2_v9_v1_schema.sql"),
+  );
   await verifyCanonicalCounts(db);
   const retained = await db.query(
     `SELECT c.program_version, w.title, e.name, s.status, l.weight::float8 AS weight
@@ -139,8 +181,14 @@ async function populatedLegacyRun() {
     [legacySession.rows[0].id],
   );
   assert(retained.rows.length === 1, "Legacy join was lost");
-  assert(retained.rows[0].program_version === "legacy", "Legacy cycle was not marked legacy");
-  assert(retained.rows[0].title === "Legacy retained workout", "Legacy workout changed");
+  assert(
+    retained.rows[0].program_version === "legacy",
+    "Legacy cycle was not marked legacy",
+  );
+  assert(
+    retained.rows[0].title === "Legacy retained workout",
+    "Legacy workout changed",
+  );
   assert(Number(retained.rows[0].weight) === 50, "Legacy set changed");
   await db.close();
 }
@@ -174,7 +222,8 @@ async function backupRoundTripRun() {
   for (const table of BACKUP_TABLES) {
     backup[table] = (await db.query(`SELECT * FROM ${table}`)).rows;
   }
-  for (const table of [...BACKUP_TABLES].reverse()) await db.exec(`DELETE FROM ${table}`);
+  for (const table of [...BACKUP_TABLES].reverse())
+    await db.exec(`DELETE FROM ${table}`);
   await db.exec("DELETE FROM sync_ops");
   for (const table of BACKUP_TABLES) {
     for (const row of backup[table]) {
@@ -196,7 +245,11 @@ async function backupRoundTripRun() {
   );
   assert(restored === 1, `Backup round trip restored ${restored} logged sets`);
   assert(
-    (await scalar(db, "SELECT count(*)::int AS n FROM rhr_measurements", "n")) === 1,
+    (await scalar(
+      db,
+      "SELECT count(*)::int AS n FROM rhr_measurements",
+      "n",
+    )) === 1,
     "RHR was not restored",
   );
   assert(

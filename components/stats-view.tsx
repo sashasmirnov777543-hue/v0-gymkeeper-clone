@@ -10,6 +10,13 @@ import {
 } from "@/components/ui/chart";
 import { e1rmForStats, isE1rmExercise } from "@/lib/stats";
 type Row = {
+  role?: string;
+  rpe?: number | null;
+  pauseQuality?: string | null;
+  touchPoint?: string | null;
+  trajectoryQuality?: string | null;
+  techniqueSigns?: unknown;
+  symptoms?: unknown;
   exerciseName: string;
   weight: number | null;
   reps: number | null;
@@ -48,7 +55,7 @@ export function StatsView({ rows }: { rows: Row[] }) {
         reps = r.reps as number;
       volume += w * reps;
       best = Math.max(best, w);
-      const value = useE1rm ? e1rmForStats(active, w, reps) : w;
+      const value = useE1rm ? e1rmForStats(active, w, reps, r) : w;
       if (value == null) continue;
       const cur = by.get(r.sessionId);
       if (!cur || value > cur.value)
@@ -87,7 +94,7 @@ export function StatsView({ rows }: { rows: Row[] }) {
           <button
             key={n}
             onClick={() => setSelected(n)}
-            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium ${active === n ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground"}`}
+            className={`shrink-0 rounded-full border px-3 py-1.5 text-sm font-medium ${active === n ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground"}`}
           >
             {n.length > 30 ? `${n.slice(0, 30)}…` : n}
           </button>
@@ -105,13 +112,13 @@ export function StatsView({ rows }: { rows: Row[] }) {
         <h2 className="text-sm font-semibold">
           {useE1rm ? "Расчётный 1ПМ по сессиям" : "Максимальный вес по сессиям"}
         </h2>
-        <p className="mb-3 mt-1 text-xs text-muted-foreground">
+        <p className="mb-3 mt-1 text-sm text-muted-foreground">
           {useE1rm
-            ? "Только варианты жима и подходы 1–10 повторов."
-            : "Для изоляции e1RM не рассчитывается."}
+            ? "Только сопоставимые контрольные тройки около RPE 8. Это условный индекс, не измеренный максимум."
+            : "Для изоляции индекс 3@8 не рассчитывается."}
         </p>
         {summary.chartData.length < 2 ? (
-          <p className="py-6 text-center text-xs text-muted-foreground">
+          <p className="py-6 text-center text-sm text-muted-foreground">
             Нужно минимум две сессии.
           </p>
         ) : (
@@ -143,7 +150,7 @@ function Stat({ value, label }: { value: string | number; label: string }) {
   return (
     <div className="rounded-xl border border-border bg-card px-2 py-3 text-center">
       <p className="text-lg font-bold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-sm text-muted-foreground">{label}</p>
     </div>
   );
 }

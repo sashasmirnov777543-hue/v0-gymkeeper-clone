@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  RMREF_CHECKPOINTS,
+  RMREF_MAX_STEP_KG,
+  STANDARD_TRIPLE_RPE8_FACTOR,
   e1rmFromStandardTriple,
   reviewRmrefUpdate,
+  rmrefFromCalibrationTriple,
   roundToStepHalfDown,
   weightFromRmrefPercent,
   weightRangeFromRmref,
+  suggestCalibrationTripleWeight,
+  TRIPLE_PERCENT_BY_RPE,
 } from "../lib/program/rmref.ts";
 
 
@@ -48,12 +54,29 @@ test("calculates the PDF control table from RMref 115", () => {
 });
 
 
-test("standard triple e1RM is weight times 1.10", () => {
-  assert.equal(e1rmFromStandardTriple(110), 121);
+test("standard triple e1RM divides by the RPE 8 factor instead of Epley", () => {
+  assert.equal(STANDARD_TRIPLE_RPE8_FACTOR, 0.863);
+  assert.equal(e1rmFromStandardTriple(110), 127.4623);
+  assert.equal(e1rmFromStandardTriple(100), 115.8749);
+  // Прежняя формула Эпли дала бы 121 кг и занизила бы результат примерно на 5%.
+  assert.notEqual(e1rmFromStandardTriple(110), 121);
 });
 
 
-test("RMref can increase only at three checkpoints with two distinct confirmations", () => {
+test("RMref derived from a calibration triple rounds down to the 2.5 kg step", () => {
+  assert.equal(rmrefFromCalibrationTriple(110), 125);
+  assert.equal(rmrefFromCalibrationTriple(100), 115);
+  assert.equal(rmrefFromCalibrationTriple(99.25), 115);
+  assert.equal(rmrefFromCalibrationTriple(115), 132.5);
+  assert.equal(rmrefFromCalibrationTriple(120), 137.5);
+  assert.equal(rmrefFromCalibrationTriple(110, 5), 125);
+});
+
+
+test("RMref changes only at the six checkpoints, by at most 5 kg in either direction", () => {
+  assert.deepEqual(RMREF_CHECKPOINTS, ["h2-1", "h2-5", "h2-9", "v9-5", "v9-11", "v9-13"]);
+  assert.equal(RMREF_MAX_STEP_KG, 5);
+
   const evidence = [
     {
       sessionId: 1,
@@ -62,15 +85,9 @@ test("RMref can increase only at three checkpoints with two distinct confirmatio
       comparableTouchPoint: true,
       improvementConfirmed: true,
     },
-    {
-      sessionId: 2,
-      comparableTechnique: true,
-      comparablePause: true,
-      comparableTouchPoint: true,
-      improvementConfirmed: true,
-    },
   ];
-  for (const checkpoint of ["h2-9", "v9-4", "v9-8"]) {
+
+  for (const checkpoint of RMREF_CHECKPOINTS) {
     assert.deepEqual(
       reviewRmrefUpdate({
         checkpoint,
@@ -79,20 +96,23 @@ test("RMref can increase only at three checkpoints with two distinct confirmatio
         evidence,
       }),
       { allowed: true, nextRmrefKg: 117.5, reasons: [] },
+      checkpoint,
     );
   }
 
-  const oneConfirmation = reviewRmrefUpdate({
-    checkpoint: "h2-9",
-    currentRmrefKg: 115,
-    proposedRmrefKg: 117.5,
-    evidence: [evidence[0], { ...evidence[0] }],
-  });
-  assert.equal(oneConfirmation.allowed, false);
-  assert.ok(oneConfirmation.reasons.includes("two-comparable-confirmations-required"));
+  // Редакция 2.0: снижение разрешено наравне с повышением.
+  assert.deepEqual(
+    reviewRmrefUpdate({
+      checkpoint: "v9-11",
+      currentRmrefKg: 115,
+      proposedRmrefKg: 110,
+      evidence,
+    }),
+    { allowed: true, nextRmrefKg: 110, reasons: [] },
+  );
 
   const wrongCheckpoint = reviewRmrefUpdate({
-    checkpoint: "v9-5",
+    checkpoint: "v9-4",
     currentRmrefKg: 115,
     proposedRmrefKg: 117.5,
     evidence,
@@ -100,12 +120,122 @@ test("RMref can increase only at three checkpoints with two distinct confirmatio
   assert.equal(wrongCheckpoint.allowed, false);
   assert.ok(wrongCheckpoint.reasons.includes("not-an-rmref-checkpoint"));
 
-  const jump = reviewRmrefUpdate({
-    checkpoint: "v9-4",
+  for (const proposedRmrefKg of [122.5, 107.5]) {
+    const jump = reviewRmrefUpdate({
+      checkpoint: "h2-9",
+      currentRmrefKg: 115,
+      proposedRmrefKg,
+      evidence,
+    });
+    assert.equal(jump.allowed, false, String(proposedRmrefKg));
+    assert.ok(jump.reasons.includes("change-exceeds-5-kg"), String(proposedRmrefKg));
+    assert.equal(jump.nextRmrefKg, 115);
+  }
+
+  const offStep = reviewRmrefUpdate({
+    checkpoint: "h2-9",
     currentRmrefKg: 115,
-    proposedRmrefKg: 120,
+    proposedRmrefKg: 116,
     evidence,
   });
-  assert.equal(jump.allowed, false);
-  assert.ok(jump.reasons.includes("increase-exceeds-2.5-kg"));
+  assert.equal(offStep.allowed, false);
+  assert.ok(offStep.reasons.includes("change-must-use-2.5-kg-step"));
+});
+
+
+test("a single comparable calibration is enough to move RMref", () => {
+  const comparable = {
+    sessionId: 1,
+    comparableTechnique: true,
+    comparablePause: true,
+    comparableTouchPoint: true,
+    improvementConfirmed: true,
+  };
+
+  assert.deepEqual(
+    reviewRmrefUpdate({
+      checkpoint: "h2-9",
+      currentRmrefKg: 115,
+      proposedRmrefKg: 117.5,
+      evidence: [comparable],
+    }),
+    { allowed: true, nextRmrefKg: 117.5, reasons: [] },
+  );
+
+  const noEvidence = reviewRmrefUpdate({
+    checkpoint: "h2-9",
+    currentRmrefKg: 115,
+    proposedRmrefKg: 117.5,
+    evidence: [],
+  });
+  assert.equal(noEvidence.allowed, false);
+  assert.ok(noEvidence.reasons.includes("comparable-calibration-required"));
+
+  const notComparable = reviewRmrefUpdate({
+    checkpoint: "h2-9",
+    currentRmrefKg: 115,
+    proposedRmrefKg: 117.5,
+    evidence: [{ ...comparable, comparablePause: false }],
+  });
+  assert.equal(notComparable.allowed, false);
+  assert.ok(notComparable.reasons.includes("comparable-calibration-required"));
+
+  // Подтверждение не требуется, когда RMref остаётся прежним.
+  assert.deepEqual(
+    reviewRmrefUpdate({
+      checkpoint: "h2-9",
+      currentRmrefKg: 115,
+      proposedRmrefKg: 115,
+      evidence: [],
+    }),
+    { allowed: true, nextRmrefKg: 115, reasons: [] },
+  );
+});
+
+test("подсказка веса стандартизированной тройки не требует логировать разминку", () => {
+  // Первый замер: считается от RMref как 86,3% и округляется вниз до шага 2,5.
+  const first = suggestCalibrationTripleWeight({ rmrefKg: 115 });
+  assert.equal(first?.weightKg, 97.5);
+  assert.equal(first?.basis, "rmref");
+
+  // Оценка разминки сдвигает подсказку ровно на один шаг в каждую сторону.
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 115, warmupFeel: "easy" })?.weightKg, 100);
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 115, warmupFeel: "hard" })?.weightKg, 95);
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 115, warmupFeel: "normal" })?.weightKg, 97.5);
+
+  // Прошлая тройка на RPE 8 переносится как есть.
+  const same = suggestCalibrationTripleWeight({
+    rmrefKg: 115,
+    previous: { weightKg: 100, rpe: 8 },
+  });
+  assert.equal(same?.weightKg, 100);
+  assert.equal(same?.basis, "previous_calibration");
+
+  // Прошлая тройка на другом RPE приводится к эквиваленту RPE 8.
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 115, previous: { weightKg: 100, rpe: 7 } })?.weightKg,
+    102.5,
+  );
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 115, previous: { weightKg: 100, rpe: 9 } })?.weightKg,
+    95,
+  );
+
+  // Без фактического RPE вес прошлой тройки берётся без пересчёта.
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 115, previous: { weightKg: 102.5, rpe: null } })?.weightKg,
+    102.5,
+  );
+
+  // Прошлая калибровка важнее RMref: подсказка не откатывается к расчёту от базы.
+  assert.equal(
+    suggestCalibrationTripleWeight({ rmrefKg: 200, previous: { weightKg: 100, rpe: 8 } })?.weightKg,
+    100,
+  );
+
+  // Некорректный RMref без истории подсказки не даёт.
+  assert.equal(suggestCalibrationTripleWeight({ rmrefKg: 0 }), null);
+
+  // Таблица долей 1ПМ согласована с коэффициентом пересчёта e1RM.
+  assert.equal(TRIPLE_PERCENT_BY_RPE["8"], STANDARD_TRIPLE_RPE8_FACTOR);
 });

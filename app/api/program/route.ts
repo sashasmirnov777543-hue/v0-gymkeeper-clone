@@ -1,83 +1,87 @@
-import { NextResponse } from "next/server"
-import { asc, eq } from "drizzle-orm"
-import { db } from "@/lib/db"
-import { ensureSchema } from "@/lib/db/migrate"
-import { cycles, workoutExercises, workouts } from "@/lib/db/schema"
-import { getLastSetsByExerciseNames } from "@/app/actions/workout"
-
-export const dynamic = "force-dynamic"
-
+import { NextResponse } from "next/server";
+import { asc, eq, inArray } from "drizzle-orm";
+import { db } from "@/lib/db";
+import {
+  cycles,
+  programState,
+  workoutExercises,
+  workouts,
+} from "@/lib/db/schema";
+import { getLastSetsByExerciseNames } from "@/app/actions/workout";
+import { ACTIVE_PROGRAM_VERSION } from "@/lib/program/version";
+import { safetyProfile } from "@/lib/program/policy";
+import { requireAuth } from "@/lib/require-auth";
+export const dynamic = "force-dynamic";
 export async function GET() {
-  await ensureSchema()
-
-  const [allCycles, allWorkouts, allExercises] = await Promise.all([
+  try {
+    await requireAuth();
+  } catch {
+    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
+  }
+  const [allCycles, [state]] = await Promise.all([
     db
       .select()
       .from(cycles)
-      .where(eq(cycles.programVersion, "h2-v9-1.0"))
+      .where(eq(cycles.programVersion, ACTIVE_PROGRAM_VERSION))
       .orderBy(asc(cycles.sortOrder)),
-    db.select().from(workouts).orderBy(asc(workouts.sortOrder)),
     db
       .select()
-      .from(workoutExercises)
-      .orderBy(asc(workoutExercises.sortOrder)),
-  ])
-
-  const cycleIds = new Set(allCycles.map((cycle) => cycle.id))
-  const activeWorkouts = allWorkouts.filter((workout) => cycleIds.has(workout.cycleId))
-  const workoutIds = new Set(activeWorkouts.map((workout) => workout.id))
-  const activeExercises = allExercises.filter((exercise) =>
-    workoutIds.has(exercise.workoutId),
-  )
-  const names = [...new Set(activeExercises.map((exercise) => exercise.name))]
-  const lastSetsByName = await getLastSetsByExerciseNames(names)
-
-  const result = allCycles.map((c) => ({
-    id: c.id,
-    number: c.number,
-    name: c.name,
-    macrocycle: c.macrocycle,
-    block: c.block,
-    notes: c.notes,
-    workouts: activeWorkouts
-      .filter((w) => w.cycleId === c.id)
-      .map((w) => ({
-        id: w.id,
-        cycleId: w.cycleId,
-        label: w.label,
-        title: w.title,
-        notes: w.notes,
-        kind: w.kind,
-        cardioZone: w.cardioZone,
-        cardioMinutes: w.cardioMinutes,
-        prescription: w.prescription,
-        branches: w.branches,
-        exercises: activeExercises
-          .filter((e) => e.workoutId === w.id)
-          .map((e) => ({
-            id: e.id,
-            workoutId: e.workoutId,
-            name: e.name,
-            weightText: e.weightText,
-            tempo: e.tempo,
-            targetReps: e.targetReps,
-            targetSets: e.targetSets,
-            targetRirMin: e.targetRirMin,
-            targetRirMax: e.targetRirMax,
-            targetRpeMin: e.targetRpeMin != null ? Number(e.targetRpeMin) : null,
-            targetRpeMax: e.targetRpeMax != null ? Number(e.targetRpeMax) : null,
-            role: e.role,
-            isOptional: e.isOptional,
-            condition: e.conditionCode,
-            comment: e.comment,
-            restSeconds: e.restSeconds,
+      .from(programState)
+      .where(eq(programState.profileKey, "primary"))
+      .limit(1),
+  ]);
+  const activeWorkouts = allCycles.length
+    ? await db
+        .select()
+        .from(workouts)
+        .where(
+          inArray(
+            workouts.cycleId,
+            allCycles.map((c) => c.id),
+          ),
+        )
+        .orderBy(asc(workouts.sortOrder))
+    : [];
+  const activeExercises = activeWorkouts.length
+    ? await db
+        .select()
+        .from(workoutExercises)
+        .where(
+          inArray(
+            workoutExercises.workoutId,
+            activeWorkouts.map((w) => w.id),
+          ),
+        )
+        .orderBy(asc(workoutExercises.sortOrder))
+    : [];
+  const lastSetsByName = await getLastSetsByExerciseNames([
+    ...new Set<string>(activeExercises.map((e) => String(e.name))),
+  ]);
+  return NextResponse.json(
+    {
+      programVersion: ACTIVE_PROGRAM_VERSION,
+      baseKg: Number(state?.rmrefKg ?? 115),
+      safetyProfile: safetyProfile(state?.safetyProfile),
+      lastSetsByName,
+      cycles: allCycles.map((c) => ({
+        ...c,
+        workouts: activeWorkouts
+          .filter((w) => w.cycleId === c.id)
+          .map((w) => ({
+            ...w,
+            exercises: activeExercises
+              .filter((e) => e.workoutId === w.id)
+              .map((e) => ({
+                ...e,
+                targetRpeMin:
+                  e.targetRpeMin == null ? null : Number(e.targetRpeMin),
+                targetRpeMax:
+                  e.targetRpeMax == null ? null : Number(e.targetRpeMax),
+                condition: e.conditionCode,
+              })),
           })),
       })),
-  }))
-
-  return NextResponse.json({
-    programVersion: "h2-v9-1.0",
-    cycles: result,
-    lastSetsByName,
-  })
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

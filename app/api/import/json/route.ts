@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { requireAuth } from "@/lib/require-auth";
@@ -38,12 +40,18 @@ export async function POST(request: Request) {
   const allowed = new Set<string>(BACKUP_TABLES);
   for (const name of Object.keys(backup.tables)) {
     if (!allowed.has(name)) {
-      return NextResponse.json({ error: `Недопустимая таблица: ${name}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `Недопустимая таблица: ${name}` },
+        { status: 400 },
+      );
     }
   }
   for (const table of BACKUP_TABLES) {
     if (!Array.isArray(backup.tables[table])) {
-      return NextResponse.json({ error: `В копии отсутствует таблица ${table}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `В копии отсутствует таблица ${table}` },
+        { status: 400 },
+      );
     }
   }
 
@@ -80,10 +88,12 @@ export async function POST(request: Request) {
           keys.map((key) => row[key]),
         );
       }
-      const sequence = await client.query<{ seq: string | null }>(
-        "SELECT pg_get_serial_sequence($1,'id') AS seq",
-        [name],
-      );
+      const sequence = columns.includes("id")
+        ? await client.query<{ seq: string | null }>(
+            "SELECT pg_get_serial_sequence($1,'id') AS seq",
+            [name],
+          )
+        : { rows: [] };
       if (sequence.rows[0]?.seq) {
         await client.query(
           `SELECT setval($1, COALESCE((SELECT MAX(id) FROM ${quote(name)}), 1), (SELECT MAX(id) IS NOT NULL FROM ${quote(name)}))`,
@@ -106,12 +116,19 @@ export async function POST(request: Request) {
       throw new Error("Копия содержит нарушенные связи тренировок");
     }
 
+    const seed = await readFile(
+      join(process.cwd(), "migrations", "016_seed_h2_v9_v4.sql"),
+      "utf8",
+    );
+    await client.query(seed);
     await client.query("COMMIT");
     return NextResponse.json({ ok: true, version: BACKUP_VERSION });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Ошибка восстановления" },
+      {
+        error: error instanceof Error ? error.message : "Ошибка восстановления",
+      },
       { status: 400 },
     );
   } finally {

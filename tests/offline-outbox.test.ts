@@ -1,5 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DEFAULT_SAFETY_PROFILE } from "../lib/program/policy.ts";
+function seed(id: number) {
+  cacheProgram({
+    programVersion: "h2-v9-4.0",
+    baseKg: 115,
+    safetyProfile: {
+      ...DEFAULT_SAFETY_PROFILE,
+      reviewed: true,
+      baseConfirmed: true,
+    },
+    lastSetsByName: {},
+    cycles: [
+      {
+        id: 1,
+        number: 2,
+        name: "Fixture",
+        macrocycle: 1,
+        block: "h2",
+        notes: null,
+        workouts: [
+          {
+            id,
+            cycleId: 1,
+            label: "B2",
+            title: "Fixture",
+            notes: null,
+            kind: "strength",
+            cardioZone: null,
+            cardioMinutes: null,
+            prescription: { isControl: false },
+            exercises: [],
+          },
+        ],
+      },
+    ],
+  });
+}
 import {
   cacheProgram,
   cancelLocalSession,
@@ -29,32 +66,57 @@ class MemoryStorage {
 }
 
 const storage = new MemoryStorage();
-Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+Object.defineProperty(globalThis, "localStorage", {
+  value: storage,
+  configurable: true,
+});
 Object.defineProperty(globalThis, "window", {
   value: { dispatchEvent: () => true },
   configurable: true,
 });
 
-
 test("versioned program cache rejects stale data", () => {
   storage.clear();
   cacheProgram({
-    programVersion: "h2-v9-1.0",
+    programVersion: "h2-v9-4.0",
     cycles: [],
     lastSetsByName: {},
   });
-  assert.equal(loadProgram()?.programVersion, "h2-v9-1.0");
+  assert.equal(loadProgram()?.programVersion, "h2-v9-4.0");
   storage.setItem(
-    "gym:program:h2-v9-1.0",
-    JSON.stringify({ programVersion: "legacy", cachedAt: new Date().toISOString() }),
+    "gym:program:h2-v9-4.0",
+    JSON.stringify({
+      programVersion: "h2-v9-2.0",
+      cachedAt: new Date().toISOString(),
+    }),
   );
   assert.equal(loadProgram(), null);
 });
 
+test("кэш прошлых редакций сохраняется для ожидающих сессий", () => {
+  // Редакция 2.0 объявляла кэш 1.0 устаревшим, но фактически его не удаляла.
+  storage.clear();
+  storage.setItem(
+    "gym:program:h2-v9-1.0",
+    JSON.stringify({ programVersion: "h2-v9-1.0" }),
+  );
+  storage.setItem(
+    "gym:program:h2-v9-2.0",
+    JSON.stringify({ programVersion: "h2-v9-2.0" }),
+  );
+  loadProgram();
+  assert.notEqual(storage.getItem("gym:program:h2-v9-1.0"), null);
+  assert.notEqual(storage.getItem("gym:program:h2-v9-2.0"), null);
+});
 
 test("offline set edit rewrites the queued set instead of losing the change", () => {
   storage.clear();
-  const key = createLocalSession(10, { sleepMinutes: 420, sleepQuality: 4 });
+  seed(10);
+  const key = createLocalSession(
+    10,
+    { sleepMinutes: 420, sleepQuality: 4 },
+    { readinessReviewed: true, safetiesSet: true },
+  );
   pushOp({
     kind: "set",
     sessionRef: key,
@@ -87,10 +149,14 @@ test("offline set edit rewrites the queued set instead of losing the change", ()
   );
 });
 
-
 test("deleting a local set removes the queued insertion and cancellation clears the session", () => {
   storage.clear();
-  const key = createLocalSession(11, { poorSleep: true });
+  seed(11);
+  const key = createLocalSession(
+    11,
+    { poorSleep: true },
+    { readinessReviewed: true, safetiesSet: true },
+  );
   pushOp({
     kind: "set",
     sessionRef: key,
@@ -104,7 +170,10 @@ test("deleting a local set removes the queued insertion and cancellation clears 
     stickingPoint: null,
   });
   assert.equal(removeQueuedLocalSet(key, 21, 1), true);
-  assert.deepEqual(getOutbox().map((operation) => operation.kind), ["start"]);
+  assert.deepEqual(
+    getOutbox().map((operation) => operation.kind),
+    ["start"],
+  );
   cancelLocalSession(key);
   assert.deepEqual(getOutbox(), []);
 });

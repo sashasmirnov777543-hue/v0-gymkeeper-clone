@@ -16,12 +16,58 @@ export type V9CycleNumber =
   | 12
   | 13;
 
-export const CONDITIONAL_HEAVY_SINGLE_CYCLES = [6, 7, 9, 11] as const;
+/**
+ * Редакция 2.0: условная сингловая работа только в V9-8, V9-10 и V9-12
+ * (абсолютные циклы 17, 19 и 21). Репетиция 3×1 в V9-11 B4 убрана —
+ * её место занял праймер T−4 с ролью primer_single, который синглом не считается.
+ */
+export const CONDITIONAL_HEAVY_SINGLE_CYCLES = [8, 10, 12] as const;
+
+/** Сколько одиночных повторов запланировано в каждом слоте. */
+export const CONDITIONAL_HEAVY_SINGLE_PLANNED: Readonly<Record<number, 1 | 2 | 3>> = {
+  8: 2,
+  10: 3,
+  12: 1,
+};
+
+/**
+ * Коридор RPE условного сингла.
+ *
+ * В редакции 2.0 карточки прописывают синглы на 90% (RPE около 7,3–8,0) и на 92,5%
+ * (RPE 8). Прежний коридор 6–7,5 отвергал бы сингл цикла 21 на том самом RPE,
+ * который предписывает его собственная карточка. Верхняя граница приведена
+ * к общему потолку программы: ни один плановый подход не выходит за RPE 8.
+ */
 export const CONDITIONAL_HEAVY_SINGLE_TARGET_RPE = {
   min: 6,
-  max: 7,
+  max: 8,
   absoluteCap: 8,
 } as const;
+
+/** Потолок процента от RMref по уровню медицинского допуска. */
+export const CLEARANCE_CEILING_PERCENT = {
+  level_1: 85,
+  level_2: 92.5,
+  level_3: 100,
+} as const;
+export type GateClearanceLevel = keyof typeof CLEARANCE_CEILING_PERCENT;
+
+/**
+ * Фактический процент от RMref по весу, который реально окажется на штанге.
+ *
+ * Проверять подпись вместо штанги — дыра, а не формальность. В редакции 2.0 сингл
+ * цикла 21 был записан как `percent: 92.5` при `exampleKg: 107.5`; фактически это
+ * 93,5% — выше потолка Уровня 2. Шлюз сравнивал 92,5 с 92,5 и пропускал единственный
+ * подход программы, который обязан был остановить.
+ */
+export function actualPercentOfRmref(
+  plannedWeightKg: number,
+  rmrefKg: number,
+): number | null {
+  if (!Number.isFinite(plannedWeightKg) || plannedWeightKg <= 0) return null;
+  if (!Number.isFinite(rmrefKg) || rmrefKg <= 0) return null;
+  return (100 * plannedWeightKg) / rmrefKg;
+}
 
 type NoCompensation = {
   compensation: "none";
@@ -37,7 +83,9 @@ export type HeavySingleSkipReason =
   | "warmup-not-safe"
   | "invalid-expected-rpe"
   | "expected-rpe-above-absolute-cap"
-  | "expected-rpe-outside-6-to-7";
+  | "expected-rpe-outside-target-band"
+  | "clearance-level-insufficient"
+  | "planned-percent-above-clearance-ceiling";
 
 export type ConditionalHeavySingleInput = {
   cycle: V9CycleNumber;
@@ -45,6 +93,18 @@ export type ConditionalHeavySingleInput = {
   readiness: ReadinessLevel;
   /** Clearance must explicitly cover the planned load and degree of straining. */
   medicalClearanceForPlannedLoadAndStraining: boolean;
+  /** Уровень медицинского допуска редакции 2.0. Необязателен для обратной совместимости. */
+  clearanceLevel?: GateClearanceLevel;
+  /**
+   * Запланированный процент от RMref по спецификации — запасной вариант.
+   * Используется, только если не переданы вес и RMref: подпись может расходиться
+   * с фактической нагрузкой из-за округления к шагу 2,5 кг.
+   */
+  plannedPercentOfRmref?: number;
+  /** Вес, который реально окажется на штанге. Имеет приоритет над подписью. */
+  plannedWeightKg?: number;
+  /** Текущий RMref, включая накопленную надбавку Δ. */
+  rmrefKg?: number;
   spotterPresent: boolean;
   safetiesSet: boolean;
   redFlagSymptoms: boolean;
@@ -56,7 +116,7 @@ export type ConditionalHeavySingleDecision =
   | {
       allowed: true;
       action: "perform";
-      plannedSingles: 1 | 3;
+      plannedSingles: 1 | 2 | 3;
       targetRpe: typeof CONDITIONAL_HEAVY_SINGLE_TARGET_RPE;
     }
   | ({
@@ -67,16 +127,16 @@ export type ConditionalHeavySingleDecision =
     } & NoCompensation);
 
 /**
- * A conditional heavy single exists only in the programmed B2 slots of V9-6,
- * V9-7, V9-9 and V9-11, plus the explicitly programmed V9-11 B4 3×1 rehearsal.
+ * Условный тяжёлый сингл существует только в слоте B2 циклов V9-8, V9-10 и V9-12.
+ * Ни в одном другом слоте и ни в одном другом цикле его нет.
  */
 export function isConditionalHeavySingleLocation(
   cycle: V9CycleNumber,
   slot: WorkoutSlot,
 ): boolean {
   return (
-    (slot === "B2" && (cycle === 6 || cycle === 7 || cycle === 9 || cycle === 11)) ||
-    (cycle === 11 && slot === "B4")
+    slot === "B2" &&
+    (CONDITIONAL_HEAVY_SINGLE_CYCLES as readonly number[]).includes(cycle)
   );
 }
 
@@ -107,7 +167,33 @@ export function decideConditionalHeavySingle(
     input.expectedRpe < CONDITIONAL_HEAVY_SINGLE_TARGET_RPE.min ||
     input.expectedRpe > CONDITIONAL_HEAVY_SINGLE_TARGET_RPE.max
   ) {
-    reasons.push("expected-rpe-outside-6-to-7");
+    reasons.push("expected-rpe-outside-target-band");
+  }
+
+  // Уровень допуска: синглы доступны с уровня 2. Дополнительно проверяется потолок.
+  // Если известны вес и RMref, потолок считается от ШТАНГИ; подпись в процентах —
+  // только запасной вариант, когда веса нет.
+  if (input.clearanceLevel) {
+    if (input.clearanceLevel === "level_1") {
+      reasons.push("clearance-level-insufficient");
+    } else {
+      const fromBar =
+        typeof input.plannedWeightKg === "number" && typeof input.rmrefKg === "number"
+          ? actualPercentOfRmref(input.plannedWeightKg, input.rmrefKg)
+          : null;
+      const effectivePercent =
+        fromBar ??
+        (typeof input.plannedPercentOfRmref === "number" &&
+        Number.isFinite(input.plannedPercentOfRmref)
+          ? input.plannedPercentOfRmref
+          : null);
+      if (
+        effectivePercent !== null &&
+        effectivePercent > CLEARANCE_CEILING_PERCENT[input.clearanceLevel] + 1e-9
+      ) {
+        reasons.push("planned-percent-above-clearance-ceiling");
+      }
+    }
   }
 
   if (reasons.length > 0) {
@@ -124,7 +210,7 @@ export function decideConditionalHeavySingle(
   return {
     allowed: true,
     action: "perform",
-    plannedSingles: input.cycle === 11 && input.slot === "B4" ? 3 : 1,
+    plannedSingles: CONDITIONAL_HEAVY_SINGLE_PLANNED[input.cycle] ?? 1,
     targetRpe: CONDITIONAL_HEAVY_SINGLE_TARGET_RPE,
   };
 }
@@ -199,7 +285,19 @@ export type H26ExtraCableFlySetInput = {
   techniqueDeclined: boolean;
 };
 
-/** H2-6: the fourth cable-fly set is the only volume increase. */
+/**
+ * УСТАРЕЛО В РЕДАКЦИИ 2.0.
+ *
+ * Условные добавочные сеты сведений циклов H2-6, H2-7 и H2-8 из программы убраны:
+ * грудной объём теперь задан фиксированно и вырос с 7,9 до 11,4–14,9 сета в неделю
+ * за счёт объёма, снятого с бицепса. В данных редакции 2.0 условных сетов сведений
+ * ноль, и приложение эти функции не вызывает.
+ *
+ * Код и тесты сохранены как исполняемая документация прежней логики шлюзов
+ * и на случай отката к редакции 1.0. Новый код их использовать не должен.
+ *
+ * @deprecated Не применяется в редакции 2.0.
+ */
 export function decideH26ExtraCableFlySet(
   input: H26ExtraCableFlySetInput,
 ): ExtraCableFlySetDecision<H26ExtraSetFailure> {
@@ -239,7 +337,7 @@ export type H27CableFlyCarryOverInput = {
   h27PreB2Readiness: ReadinessLevel;
 };
 
-/** H2-7: carry over the fourth cable-fly set only when all five PDF gates pass. */
+/** @deprecated Не применяется в редакции 2.0. См. примечание к decideH26ExtraCableFlySet. */
 export function decideH27CableFlyCarryOver(
   input: H27CableFlyCarryOverInput,
 ): ExtraCableFlySetDecision<H27CarryOverFailure> {
@@ -292,7 +390,7 @@ export type H28OptionalCableFlySetInput = {
   recoveryDeclinedAfterH27: boolean;
 };
 
-/** H2-8: at most one light 1×12-15 @RIR 4 set after the two base sets. */
+/** @deprecated Не применяется в редакции 2.0. См. примечание к decideH26ExtraCableFlySet. */
 export function decideH28OptionalCableFlySet(
   input: H28OptionalCableFlySetInput,
 ): ExtraCableFlySetDecision<H28OptionalSetFailure> {

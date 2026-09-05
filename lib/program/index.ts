@@ -1,4 +1,4 @@
-import rawProgram from "./h2-v9-v1.json" with { type: "json" };
+import rawProgram from "./h2-v9-v4.json" with { type: "json" };
 import type {
   ProgramBlock,
   ProgramCycle,
@@ -47,7 +47,9 @@ export function getProgramExercise(exerciseId: string): ProgramExercise | null {
       const exercise = workout.exercises.find((item) => item.id === exerciseId);
       if (exercise) return exercise;
       for (const branch of workout.branches) {
-        const branchExercise = branch.exercises?.find((item) => item.id === exerciseId);
+        const branchExercise = branch.exercises?.find(
+          (item) => item.id === exerciseId,
+        );
         if (branchExercise) return branchExercise;
       }
     }

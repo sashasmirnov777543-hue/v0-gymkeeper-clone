@@ -1,7 +1,10 @@
 import { H2_V9_PROGRAM } from "../program/index.ts";
 import type { CoachRuntimeContext } from "./types.ts";
 
-function range(value: { min: number | null; max: number | null } | null, suffix: string) {
+function range(
+  value: { min: number | null; max: number | null } | null,
+  suffix: string,
+) {
   if (!value) return "";
   if (value.min == null && value.max == null) return "";
   if (value.min === value.max) return `${value.min}${suffix}`;
@@ -15,6 +18,7 @@ const PROGRAM_DIGEST = H2_V9_PROGRAM.cycles.map((cycle) => ({
   checkpoint: cycle.checkpoint,
   workouts: cycle.workouts.map((workout) => ({
     id: workout.id,
+    target: `v4:${workout.id}`,
     day: workout.day,
     kind: workout.kind,
     title: workout.title,
@@ -25,7 +29,7 @@ const PROGRAM_DIGEST = H2_V9_PROGRAM.cycles.map((cycle) => ({
       [
         exercise.name,
         `${exercise.sets}×${exercise.reps}`,
-        range(exercise.percent, "% RMref"),
+        range(exercise.exampleKg, " кг · пример при R=115"),
         range(exercise.targetRpe, " RPE"),
         range(exercise.targetRir, " RIR"),
         exercise.optional ? "условно" : "",
@@ -52,12 +56,11 @@ const PROGRAM_DIGEST = H2_V9_PROGRAM.cycles.map((cycle) => ({
   })),
 }));
 
-export function buildCoachProgramContext(
-  runtime: CoachRuntimeContext,
-): string {
+export function buildCoachProgramContext(runtime: CoachRuntimeContext): string {
   const currentCycle = PROGRAM_DIGEST.find(
     (cycle) =>
-      cycle.id === `${runtime.currentBlock ?? "none"}-${runtime.currentCycle ?? 0}`,
+      cycle.id ===
+      `${runtime.currentBlock ?? "none"}-${runtime.currentCycle ?? 0}`,
   );
   return JSON.stringify({
     contextType: "trusted_application_context",

@@ -1,5 +1,5 @@
 // Service worker: офлайн-кэширование страниц и статики
-const CACHE = "gym-cache-h2-v9-v1"
+const CACHE = "gym-cache-program-3-0"
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

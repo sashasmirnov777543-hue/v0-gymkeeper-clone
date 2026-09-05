@@ -1,102 +1,55 @@
-# GymKeeper · H2 → V9
+# GymKeeper · тренировочная программа 3.0
 
-Mobile-first personal training tracker for the canonical **176-day H2→V9 bench-press program** (revision 1.0, 20 July 2026).
+Обновлённая копия проекта `v0-gymkeeper-clone` по согласованной PDF-редакции 3.0 от 5 сентября 2026.
 
-## What is included
+## Начните здесь
 
-- 22 eight-day cycles: H2 1–9 and V9 1–13
-- 2/2 calendar: P1, P2, B1, B2, P3, P4, B3, B4
-- extra 1–4 recovery days that shift later dates without compressing sessions
-- one RMref lifecycle with 2.5 kg midpoint-down rounding
-- RMref reviews only after H2-9, V9-4 and V9-8 with two comparable confirmations
-- four-level readiness traffic light with a hard red stop
-- conditional single gates only in V9-6, V9-7, V9-9 and V9-11
-- separate V9-13 branches: default standardized triple/e1RM or separately cleared direct 1RM
-- step-by-step set journal with RPE, RIR, pause, touch point, trajectory, pain, symptoms and video link
-- technical-stop algorithm and no-compensation rules
-- Z1/Z2 cardio journal with warm-up, main-zone and cool-down minutes separated
-- RHR baseline from the median of seven comparable mornings
-- offline program cache and idempotent outbox sync
-- JSON backup/restore and detailed CSV export
-- persistent Gemini 3.5 Flash coach dock on every authenticated screen
-- AI adjustments are stored as proposals and require an explicit Confirm click
+- **[UPGRADE-3.0.md](UPGRADE-3.0.md)** — безопасное обновление существующего приложения.
+- **[CHANGELOG-3.0.md](CHANGELOG-3.0.md)** — изменения поведения.
+- **[QA-3.0.md](QA-3.0.md)** — фактически выполненные проверки и ограничения окружения.
+- В приложении: **Настройки → Индивидуальный режим** и **Правила редакции 3.0**.
 
-## Stack
+## Что перенесено
 
-- Next.js 16, React 19, TypeScript
-- PostgreSQL + Drizzle ORM
-- Tailwind CSS 4
-- PWA/service worker
-- Google AI Studio, model `gemini-3.5-flash`
+176 дней, 22 восьмидневных цикла, 44 зала; точная матрица жима и кардио. Вес стартует от `W115 × R / 115` и ограничивается отдельным фиксированным C. Общая Δ и автоматическая оценка RPE по скорости не используются в активном журнале. Фактические оценки по умолчанию неизвестны. Контроль, прогрессия, разгрузка, возврат после паузы и необязательные ветки отделены от обычного плана.
 
-## Environment
+**Это не медицинский допуск.** Индивидуальные ограничения и их согласование задаются пользователем; приложение не устанавливает диагноз и не выдаёт разрешение на максимум.
 
-Copy `.env.example` into a private environment and set:
+## Разработка
 
-- `APP_USERNAME`
-- `APP_PASSWORD`
-- `SESSION_SECRET` (at least 32 random characters)
-- `DATABASE_URL`
-- `GEMINI_API_KEY` from Google AI Studio
-- optional `GEMINI_MODEL` (defaults to `gemini-3.5-flash`)
-- optional `GEMINI_BASE_URL` (defaults to Google’s official OpenAI-compatible endpoint)
+Node.js 24 рекомендуется. Установите зависимости из существующего lock-файла:
 
-Never commit real credentials.
-
-## Install and verify
-
-```bash
+```sh
 npm ci
-npm run db:migrate
-npm run check
-npm run db:dry-run
+npm run dev
 ```
 
-`npm run check` executes lint, unit tests, typecheck and the production build. `npm run db:dry-run` validates the full migration chain against an isolated PGlite/PostgreSQL-compatible database, including idempotency, legacy joins and backup round trip.
+Приватные переменные окружения задаются на сервере, по `.env.example`. Не коммитьте пароли и ключи. Существующая авторизация, PWA, пульсометр и журнал сохранены.
 
-## Database migration behavior
+```sh
+npm run lint
+npm test
+npm run program:verify
+npm run typecheck
+npm run db:dry-run
+npm run build
+```
 
-- `000_base_schema.sql` makes a fresh database reproducible.
-- Historical migrations 001–008 are left unchanged because they may already be applied.
-- `009_h2_v9_v1_schema.sql` is additive: it adds versioned program, readiness, RHR, RMref, safety-gate and coach-audit structures.
-- `010_seed_h2_v9_v1.sql` performs idempotent upserts by stable program keys.
-- Legacy cycles and their session/set history are not deleted.
-- The active UI reads only program version `h2-v9-1.0`.
+Не считать отсутствие ошибок unit-тестов доказательством готовности production: полная сборка и прогон миграций требуют установленного Next.js/Drizzle/PGlite и проверки на тестовой базе.
 
-Before applying migrations to an existing deployment, download a JSON backup and a provider-level database snapshot.
+## Версии данных
 
-## Gemini 3.5 Flash
+- PDF **3.0** → хранение **h2-v9-4.0**, ключи `v4:`.
+- PDF **2.1** → историческое хранение **h2-v9-3.0**, ключи `v3:`.
+- Исторические JSON и миграции 000–014 не переписаны.
+- Новые миграции: `015_program_30_policy.sql`, `016_seed_h2_v9_v4.sql`.
 
-The browser never receives the API key. Chat requests go through `/api/coach` on the server. Before the first message, the UI asks the user to acknowledge that chat and relevant training context are sent to Google AI Studio.
+Генераторы для активной версии:
 
-The model receives:
+```sh
+npm run program:build
+npm run program:generate
+npm run program:verify
+```
 
-- a strict coach system prompt
-- the full canonical H2→V9 program digest
-- the current program position and RMref
-- recent readiness/session summaries and RHR trend
-- recent chat history
-
-It cannot write directly. A suggested change must pass a local allowlist and safety validation, appears as a separate proposal card, and is applied only after the authenticated user presses **Confirm**. Red-flag text is caught by a local safety gate before the model call.
-
-## Security action required for existing clones
-
-An older tracked Windows migration helper contained a live database connection string. The current file no longer contains it, but deletion from the latest commit does not remove a secret from Git history.
-
-1. Rotate/revoke the old database credential at the database provider immediately.
-2. Update the private `DATABASE_URL` in the deployment.
-3. If this repository has been shared or mirrored, consider purging the secret from Git history and force-pushing only after making a protected backup and coordinating with every clone.
-
-Do not reuse the old password.
-
-## Safety scope
-
-This software implements a training framework, not medical clearance. It does not diagnose conditions, change medication, or authorize heavy straining, singles or direct 1RM testing. Clinical restrictions and qualified medical advice override the plan. A red readiness signal blocks training and warm-up.
-
-## Applying with GitHub Desktop
-
-1. Open this repository in GitHub Desktop.
-2. Review the branch `feat/h2-v9-v1-overhaul`.
-3. Inspect the diff and run the verification commands above.
-4. Commit locally.
-5. Publish the branch or open a pull request only after reviewing migration and environment settings.
+Не запускайте старые генераторы v2/v3 для обновления текущей программы. Их файлы сохранены для воспроизводимости истории.

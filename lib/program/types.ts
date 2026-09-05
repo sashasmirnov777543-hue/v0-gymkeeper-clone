@@ -1,6 +1,7 @@
 export type ProgramBlock = "h2" | "v9";
 export type WorkoutSlot = "B1" | "B2" | "B3" | "B4";
 export type WorkoutKind = "cardio" | "strength";
+export type ClearanceLevelId = "level_1" | "level_2" | "level_3";
 
 export type NumericRange = Readonly<{
   min: number | null;
@@ -35,6 +36,21 @@ export type ProgramExercise = Readonly<{
   optional: boolean;
   condition: string | null;
   excludeFromTonnage: boolean;
+  /**
+   * Подход лежит ниже валидированного диапазона шкалы RPE, поэтому числовой цели нет.
+   * Редакция 2.0 печатала здесь экстраполированные значения вплоть до отрицательных;
+   * 2.1 не печатает число там, где шкала не измеряла.
+   */
+  belowScale?: boolean;
+  /**
+   * Последний подход выполняется, только если предыдущий пришёл в целевой RPE:
+   * при консервативной оценке накопления усталости он выходит за RPE 8.
+   */
+  conditionalLastSet?: boolean;
+  restSeconds?: number;
+  branchId?: string;
+  afterControlLight?: boolean;
+  progressionEligible?: boolean;
   notes: readonly string[];
 }>;
 
@@ -57,6 +73,10 @@ export type ProgramWorkout = Readonly<{
   title: string;
   duration: MinuteRange | null;
   cardio: CardioPrescription | null;
+  isRestDay?: boolean;
+  isControl?: boolean;
+  isDeload?: boolean;
+  isTaper?: boolean;
   warmupLevel: string | null;
   exercises: readonly ProgramExercise[];
   notes: readonly string[];
@@ -86,7 +106,7 @@ export type ProgramCycle = Readonly<{
 }>;
 
 export type ProgramDefinition = Readonly<{
-  version: "h2-v9-1.0";
+  version: string;
   source: Readonly<{
     title: string;
     revision: string;
@@ -97,6 +117,13 @@ export type ProgramDefinition = Readonly<{
   cycleLengthDays: 8;
   defaultRmrefKg: 115;
   workoutSlots: Readonly<Record<WorkoutSlot, 3 | 4 | 7 | 8>>;
+  clearanceLevels?: readonly Readonly<{
+    id: string;
+    name: string;
+    ceilingPercent: number;
+    singlesAllowed: boolean;
+    directOneRmAllowed: boolean;
+  }>[];
   cycles: readonly ProgramCycle[];
 }>;
 

@@ -16,128 +16,66 @@ import { redirect } from "next/navigation";
 import { ensureSchema } from "@/lib/db/migrate";
 import { assessReadiness, type ReadinessInput } from "@/lib/readiness";
 import {
-  decideV913TestBranch,
-  type V913DirectOneRmGates,
-} from "@/lib/program/gates";
+  createStartSnapshot,
+  guardSet,
+  updateSafetyFromFacts,
+  validateSetNumbers,
+  type StartSelection,
+} from "@/lib/program/server";
 import { requireAuth } from "@/lib/require-auth";
 
 export async function startSession(
   workoutId: number,
   readiness: ReadinessInput,
-  testSelection?: {
-    branch: "triple" | "direct_1rm";
-    spotterPresent: boolean;
-    safetiesSet: boolean;
-    sideVideoReady: boolean;
-    heavyWarmup: boolean;
-    technicalIssue: boolean;
-    directOneRm?: V913DirectOneRmGates;
-  },
+  testSelection?: StartSelection,
 ) {
   await requireAuth();
   await ensureSchema();
-  const assessment = assessReadiness(readiness);
-  if (assessment.level === "red") {
-    throw new Error(
-      "Красный статус: тренировка и разминка заблокированы. Действуйте по медицинской ветке.",
-    );
-  }
-
+  if (assessReadiness(readiness).level === "red")
+    throw new Error("Красный статус: ни нагрузки, ни разминки.");
   const existing = await db
-    .select()
+    .select({ id: sessions.id })
     .from(sessions)
     .where(eq(sessions.status, "active"))
     .limit(1);
-  if (existing.length > 0) redirect(`/session/${existing[0].id}`);
-
+  if (existing[0]) redirect(`/session/${existing[0].id}`);
   const [workout] = await db
-    .select({
-      id: workouts.id,
-      programKey: workouts.programKey,
-      programVersion: cycles.programVersion,
-      block: cycles.block,
-      cycleNumber: cycles.number,
-      branches: workouts.branches,
-    })
+    .select({ programKey: workouts.programKey })
     .from(workouts)
-    .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
     .where(eq(workouts.id, workoutId))
     .limit(1);
-  if (!workout) throw new Error("Тренировка не найдена");
-  const branches = Array.isArray(workout.branches)
-    ? (workout.branches as Array<{ id?: string; default?: boolean }>)
-    : [];
-  let selectedTestBranch: string | null = null;
-  if (branches.length > 0) {
-    if (!testSelection) {
-      throw new Error("Перед тестовой сессией выберите ветку и пройдите её защитный шлюз");
-    }
-    if (!branches.some((branch) => branch.id === testSelection.branch)) {
-      throw new Error("Эта тестовая ветка не предусмотрена");
-    }
-    const requestedBranch =
-      testSelection.branch === "direct_1rm" ? "direct-1rm" : "triple";
-    const decision = decideV913TestBranch({
-      readiness: assessment.level,
-      spotterPresent: testSelection.spotterPresent,
-      safetiesSet: testSelection.safetiesSet,
-      sideVideoReady: testSelection.sideVideoReady,
-      heavyWarmup: testSelection.heavyWarmup,
-      technicalIssue: testSelection.technicalIssue,
-      requestedBranch,
-      ...(requestedBranch === "direct-1rm"
-        ? { directOneRm: testSelection.directOneRm }
-        : {}),
-    } as Parameters<typeof decideV913TestBranch>[0]);
-    if (decision.action !== "perform") {
-      throw new Error(
-        decision.action === "postpone"
-          ? "Тест нужно перенести на 24–72 часа и начинать только после возврата зелёного статуса"
-          : decision.action === "delay-or-end-block"
-            ? "Тяжёлая разминка/техническая проблема: отложите тест на 5–7 дней или завершите блок без теста"
-            : decision.action === "medical-branch"
-              ? "Красный статус: тест отменён, действует медицинская ветка"
-              : "Защитный шлюз теста не пройден",
-      );
-    }
-    if (requestedBranch === "direct-1rm" && decision.branch !== "direct-1rm") {
-      throw new Error("Шлюзы прямого 1ПМ не пройдены; выберите стандартную тройку отдельно");
-    }
-    selectedTestBranch = decision.branch === "direct-1rm" ? "direct_1rm" : "triple";
-  }
-
-  const [coachAdjustment] = workout.programKey
+  const [proposal] = workout?.programKey
     ? await db
-        .select({
-          id: coachProposals.id,
-          kind: coachProposals.kind,
-          target: coachProposals.target,
-          patch: coachProposals.patch,
-          rationale: coachProposals.rationale,
-          expiresAt: coachProposals.expiresAt,
-        })
+        .select()
         .from(coachProposals)
         .where(
           and(
-            eq(coachProposals.status, "applied"),
             eq(coachProposals.target, workout.programKey),
+            eq(coachProposals.status, "applied"),
           ),
         )
         .orderBy(desc(coachProposals.appliedAt))
         .limit(1)
     : [];
-  const activeCoachAdjustment =
-    coachAdjustment &&
-    (!coachAdjustment.expiresAt || coachAdjustment.expiresAt.getTime() >= Date.now())
-      ? coachAdjustment
+  const adjustment =
+    proposal &&
+    (!proposal.expiresAt || proposal.expiresAt.getTime() >= Date.now())
+      ? proposal
       : null;
-
+  const prepared = await createStartSnapshot(
+    workoutId,
+    readiness,
+    testSelection,
+    db,
+    false,
+    (adjustment?.patch ?? {}) as Record<string, unknown>,
+  );
   const inserted = await db
     .insert(sessions)
     .values({
       workoutId,
-      programVersion: workout.programVersion,
-      testBranch: selectedTestBranch,
+      programVersion: prepared.version,
+      testBranch: prepared.branch,
       sleepMinutes: readiness.sleepMinutes,
       sleepQuality: readiness.sleepQuality,
       shoulderPain: readiness.shoulderPain,
@@ -147,49 +85,37 @@ export async function startSession(
         readiness.restingHeartRateTrend?.deltaFromBaselineBpm != null
           ? Math.round(readiness.restingHeartRateTrend.deltaFromBaselineBpm)
           : null,
-      readinessLevel: assessment.level,
+      readinessLevel: prepared.assessment.level,
       readinessInput: readiness,
-      readinessReasons: assessment.reasonCodes,
+      readinessReasons: prepared.assessment.reasonCodes,
       adaptationPlan: {
-        readiness: assessment.permittedAction,
-        coachAdjustment: activeCoachAdjustment,
+        readiness: prepared.assessment.permittedAction,
+        coachAdjustment: adjustment,
+        revision30: prepared.snapshot,
       },
       redFlags: readiness.clinicalStopFlags ?? {},
     })
     .onConflictDoNothing()
     .returning({ id: sessions.id });
-
-  if (inserted.length === 0) {
-    const [winner] = await db
+  if (!inserted[0]) {
+    const [active] = await db
       .select({ id: sessions.id })
       .from(sessions)
       .where(eq(sessions.status, "active"))
       .limit(1);
-    if (winner) redirect(`/session/${winner.id}`);
-    throw new Error("Не удалось создать сессию");
+    if (active) redirect(`/session/${active.id}`);
+    throw new Error("Не удалось создать сессию.");
   }
-
   redirect(`/session/${inserted[0].id}`);
 }
 
-async function assertExerciseBelongsToSession(sessionId: number, exerciseId: number) {
-  const [row] = await db.select({ id: sessions.id }).from(sessions)
-    .innerJoin(workouts, eq(sessions.workoutId, workouts.id))
-    .innerJoin(workoutExercises, eq(workoutExercises.workoutId, workouts.id))
-    .where(
-      and(
-        eq(sessions.id, sessionId),
-        eq(sessions.status, "active"),
-        eq(sessions.safetyStopped, false),
-        eq(workoutExercises.id, exerciseId),
-      ),
-    )
-    .limit(1);
-  if (!row) throw new Error("Подход не принадлежит активной сессии");
-}
 async function assertSetBelongsToSession(setId: number, sessionId: number) {
- const [row]=await db.select({id:loggedSets.id}).from(loggedSets).where(and(eq(loggedSets.id,setId),eq(loggedSets.sessionId,sessionId))).limit(1);
- if(!row) throw new Error("Подход не принадлежит сессии");
+  const [row] = await db
+    .select({ id: loggedSets.id })
+    .from(loggedSets)
+    .where(and(eq(loggedSets.id, setId), eq(loggedSets.sessionId, sessionId)))
+    .limit(1);
+  if (!row) throw new Error("Подход не принадлежит сессии");
 }
 
 export async function logSet(input: {
@@ -200,7 +126,7 @@ export async function logSet(input: {
   reps: number | null;
   rir: number | null;
   rpe: number | null;
-  velocity: "fast" | "normal" | "slow";
+  velocity: "fast" | "normal" | "slow" | null;
   stickingPoint: "chest" | "middle" | "lockout" | null;
   isWarmup?: boolean;
   pauseQuality?: "clean" | "short" | "lost" | null;
@@ -212,65 +138,97 @@ export async function logSet(input: {
   videoUrl?: string | null;
 }) {
   await requireAuth();
-  await assertExerciseBelongsToSession(input.sessionId, input.workoutExerciseId);
-  if (!Number.isInteger(input.setNumber) || input.setNumber < 1 || input.setNumber > 30) {
+  if (
+    !Number.isInteger(input.setNumber) ||
+    input.setNumber < 1 ||
+    input.setNumber > 30
+  ) {
     throw new Error("Некорректный номер подхода");
   }
-  if (input.weight != null && (!Number.isFinite(input.weight) || input.weight < 0 || input.weight > 500)) {
+  if (
+    input.weight != null &&
+    (!Number.isFinite(input.weight) || input.weight < 0 || input.weight > 500)
+  ) {
     throw new Error("Некорректный вес");
   }
-  if (input.reps != null && (!Number.isInteger(input.reps) || input.reps < 0 || input.reps > 100)) {
+  if (
+    input.reps != null &&
+    (!Number.isInteger(input.reps) || input.reps < 0 || input.reps > 100)
+  ) {
     throw new Error("Некорректные повторения");
   }
-  if (input.rir != null && (!Number.isInteger(input.rir) || input.rir < 0 || input.rir > 10)) {
+  if (
+    input.rir != null &&
+    (!Number.isInteger(input.rir) || input.rir < 0 || input.rir > 10)
+  ) {
     throw new Error("RIR должен быть от 0 до 10");
   }
-  if (input.rpe != null && (!Number.isFinite(input.rpe) || input.rpe < 0 || input.rpe > 10)) {
+  if (
+    input.rpe != null &&
+    (!Number.isFinite(input.rpe) || input.rpe < 0 || input.rpe > 10)
+  ) {
     throw new Error("RPE должен быть от 0 до 10");
   }
-  if (input.painScore != null && (!Number.isInteger(input.painScore) || input.painScore < 0 || input.painScore > 10)) {
+  if (
+    input.painScore != null &&
+    (!Number.isInteger(input.painScore) ||
+      input.painScore < 0 ||
+      input.painScore > 10)
+  ) {
     throw new Error("Боль должна быть от 0 до 10");
   }
-  const inserted = await db
-    .insert(loggedSets)
-    .values({
-      sessionId: input.sessionId,
-      workoutExerciseId: input.workoutExerciseId,
-      setNumber: input.setNumber,
-      weight: input.weight != null ? String(input.weight) : null,
-      reps: input.reps,
-      rir: input.rir,
-      rpe: input.rpe != null ? String(input.rpe) : null,
-      velocity: input.velocity,
-      stickingPoint: input.stickingPoint,
-      isWarmup: input.isWarmup ?? false,
-      pauseQuality: input.pauseQuality ?? null,
-      touchPoint: input.touchPoint ?? null,
-      trajectoryQuality: input.trajectoryQuality ?? null,
-      techniqueSigns: input.techniqueSigns ?? [],
-      painScore: input.painScore ?? null,
-      symptoms: input.symptoms ?? [],
-      videoUrl: input.videoUrl?.trim() || null,
-    })
-    .returning({ id: loggedSets.id });
-  if (
-    input.symptoms?.some((value) =>
-      ["medical_symptom", "pain_changes_movement", "unsafe_loss_of_control"].includes(value),
-    )
-  ) {
-    await db
-      .update(sessions)
-      .set({ safetyStopped: true })
-      .where(eq(sessions.id, input.sessionId));
-  }
+  const saved = await db.transaction(async (tx) => {
+    validateSetNumbers(input);
+    await guardSet(tx, input.sessionId, input.workoutExerciseId, input);
+    const inserted = await tx
+      .insert(loggedSets)
+      .values({
+        sessionId: input.sessionId,
+        workoutExerciseId: input.workoutExerciseId,
+        setNumber: input.setNumber,
+        weight: input.weight != null ? String(input.weight) : null,
+        reps: input.reps,
+        rir: input.rir,
+        rpe: input.rpe != null ? String(input.rpe) : null,
+        velocity: input.velocity,
+        stickingPoint: input.stickingPoint,
+        isWarmup: input.isWarmup ?? false,
+        pauseQuality: input.pauseQuality ?? null,
+        touchPoint: input.touchPoint ?? null,
+        trajectoryQuality: input.trajectoryQuality ?? null,
+        techniqueSigns: input.techniqueSigns ?? [],
+        painScore: input.painScore ?? null,
+        symptoms: input.symptoms ?? [],
+        videoUrl: input.videoUrl?.trim() || null,
+      })
+      .returning({ id: loggedSets.id });
+    if (
+      input.symptoms?.some((value) =>
+        [
+          "medical_symptom",
+          "pain_changes_movement",
+          "unsafe_loss_of_control",
+        ].includes(value),
+      )
+    ) {
+      await tx
+        .update(sessions)
+        .set({ safetyStopped: true })
+        .where(eq(sessions.id, input.sessionId));
+    }
+    await updateSafetyFromFacts(tx, input.sessionId);
+    return { id: inserted[0].id };
+  });
   revalidatePath(`/session/${input.sessionId}`);
-  return { id: inserted[0].id };
+  return saved;
 }
 
 export async function deleteSet(setId: number, sessionId: number) {
   await requireAuth();
   await assertSetBelongsToSession(setId, sessionId);
-  await db.delete(loggedSets).where(and(eq(loggedSets.id, setId), eq(loggedSets.sessionId, sessionId)));
+  await db
+    .delete(loggedSets)
+    .where(and(eq(loggedSets.id, setId), eq(loggedSets.sessionId, sessionId)));
   revalidatePath(`/session/${sessionId}`);
 }
 
@@ -290,7 +248,10 @@ export async function finishSession(sessionId: number) {
       .where(eq(workouts.id, changed[0].workoutId))
       .limit(1);
     if (position?.dayOffset != null && position.dayInCycle != null) {
-      const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+      const nextDay = Math.min(
+        176,
+        position.dayOffset + position.dayInCycle + 1,
+      );
       await tx
         .update(programState)
         .set({
@@ -309,8 +270,22 @@ export async function finishSession(sessionId: number) {
 export async function cancelSession(sessionId: number) {
   await requireAuth();
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM sessions WHERE id=${sessionId} FOR UPDATE`,
+    );
+    const [active] = await tx
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active")))
+      .limit(1);
+    if (!active)
+      throw new Error(
+        "Можно отменить только активную сессию. История сохранена.",
+      );
     await tx.delete(loggedSets).where(eq(loggedSets.sessionId, sessionId));
-    await tx.delete(sessions).where(and(eq(sessions.id, sessionId), eq(sessions.status, "active")));
+    await tx
+      .delete(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.status, "active")));
   });
   revalidatePath("/");
   redirect("/");
@@ -337,21 +312,56 @@ export async function updateSet(input: {
   rpe?: number | null;
 }) {
   await requireAuth();
-  await assertSetBelongsToSession(input.setId, input.sessionId);
-  if (input.rpe != null && (!Number.isFinite(input.rpe) || input.rpe < 0 || input.rpe > 10)) {
-    throw new Error("RPE должен быть от 0 до 10");
-  }
-  await db
-    .update(loggedSets)
-    .set({
-      weight: input.weight != null ? String(input.weight) : null,
-      reps: input.reps,
-      rir: input.rir,
-      ...(input.rpe !== undefined
-        ? { rpe: input.rpe != null ? String(input.rpe) : null }
-        : {}),
-    })
-    .where(eq(loggedSets.id, input.setId));
+  validateSetNumbers(input);
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM sessions WHERE id=${input.sessionId} FOR UPDATE`,
+    );
+    const [session] = await tx
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, input.sessionId))
+      .limit(1);
+    const [set] = await tx
+      .select()
+      .from(loggedSets)
+      .where(
+        and(
+          eq(loggedSets.id, input.setId),
+          eq(loggedSets.sessionId, input.sessionId),
+        ),
+      )
+      .limit(1);
+    if (!session || session.status !== "active" || !set)
+      throw new Error(
+        "Изменять можно только собственный подход активной сессии.",
+      );
+    if (
+      !session.adaptationPlan ||
+      typeof session.adaptationPlan !== "object" ||
+      !("revision30" in session.adaptationPlan)
+    )
+      throw new Error(
+        "История предыдущей редакции доступна только для чтения.",
+      );
+    await tx
+      .update(loggedSets)
+      .set({
+        weight: input.weight != null ? String(input.weight) : null,
+        reps: input.reps,
+        rir: input.rir,
+        ...(input.rpe !== undefined
+          ? { rpe: input.rpe != null ? String(input.rpe) : null }
+          : {}),
+      })
+      .where(
+        and(
+          eq(loggedSets.id, input.setId),
+          eq(loggedSets.sessionId, input.sessionId),
+        ),
+      );
+    await updateSafetyFromFacts(tx, input.sessionId);
+  });
   revalidatePath(`/session/${input.sessionId}`);
 }
 
@@ -366,16 +376,26 @@ export async function finishCardioSession(input: {
   warmupMinutes?: number | null;
   mainMinutes?: number | null;
   cooldownMinutes?: number | null;
-  cardioRpe: number;
-  cardioTalkTest: "full_sentences" | "short_phrases" | "difficult";
+  supportLog?: { completedIds: number[]; mode: number };
+  cardioRpe: number | null;
+  cardioTalkTest: "full_sentences" | "short_phrases" | "difficult" | null;
   cardioSymptoms?: string | null;
 }) {
   await requireAuth();
   await ensureSchema();
-  if (!Number.isInteger(input.durationSeconds) || input.durationSeconds < 0) {
+  if (
+    !Number.isInteger(input.durationSeconds) ||
+    input.durationSeconds < 0 ||
+    input.durationSeconds > 86400
+  ) {
     throw new Error("Некорректная длительность кардио");
   }
-  if (!Number.isInteger(input.cardioRpe) || input.cardioRpe < 1 || input.cardioRpe > 10) {
+  if (
+    input.cardioRpe != null &&
+    (!Number.isInteger(input.cardioRpe) ||
+      input.cardioRpe < 1 ||
+      input.cardioRpe > 10)
+  ) {
     throw new Error("RPE кардио должен быть от 1 до 10");
   }
   await db.transaction(async (tx) => {
@@ -395,8 +415,11 @@ export async function finishCardioSession(input: {
         cardioRpe: input.cardioRpe,
         cardioTalkTest: input.cardioTalkTest,
         cardioSymptoms: input.cardioSymptoms?.trim() || null,
+        supportLog: input.supportLog ?? null,
       })
-      .where(and(eq(sessions.id, input.sessionId), eq(sessions.status, "active")))
+      .where(
+        and(eq(sessions.id, input.sessionId), eq(sessions.status, "active")),
+      )
       .returning({ workoutId: sessions.workoutId });
     if (!changed.length) throw new Error("Кардио уже завершено или не найдено");
     const [position] = await tx
@@ -406,7 +429,10 @@ export async function finishCardioSession(input: {
       .where(eq(workouts.id, changed[0].workoutId))
       .limit(1);
     if (position?.dayOffset != null && position.dayInCycle != null) {
-      const nextDay = Math.min(176, position.dayOffset + position.dayInCycle + 1);
+      const nextDay = Math.min(
+        176,
+        position.dayOffset + position.dayInCycle + 1,
+      );
       await tx
         .update(programState)
         .set({
@@ -478,6 +504,7 @@ export async function getLastSetsByExerciseNames(names: string[]) {
     .where(
       and(
         eq(sessions.status, "completed"),
+        eq(loggedSets.isWarmup, false),
         inArray(workoutExercises.name, names),
       ),
     )
@@ -558,4 +585,39 @@ export async function getExerciseHistory(name: string, limit = 6) {
     .slice(0, limit)
     .reverse()
     .map((id) => bySession.get(id)!);
+}
+
+/**
+ * Последняя выполненная стандартизированная тройка — калибровочная или тестовая.
+ *
+ * Ищется по роли, а не по названию: тестовая тройка в Ц22 должна опираться
+ * на калибровку Ц20, у которой другое название упражнения.
+ */
+export async function getLastStandardTriple(): Promise<{
+  weightKg: number;
+  rpe: number | null;
+} | null> {
+  const [row] = await db
+    .select({
+      weight: loggedSets.weight,
+      rpe: loggedSets.rpe,
+    })
+    .from(loggedSets)
+    .innerJoin(
+      workoutExercises,
+      eq(loggedSets.workoutExerciseId, workoutExercises.id),
+    )
+    .innerJoin(sessions, eq(loggedSets.sessionId, sessions.id))
+    .where(
+      and(
+        eq(sessions.status, "completed"),
+        inArray(workoutExercises.role, ["calibration", "test_triple"]),
+      ),
+    )
+    .orderBy(desc(sessions.startedAt), desc(loggedSets.id))
+    .limit(1);
+  if (!row?.weight) return null;
+  const weightKg = Number.parseFloat(row.weight);
+  if (!Number.isFinite(weightKg) || weightKg <= 0) return null;
+  return { weightKg, rpe: row.rpe != null ? Number(row.rpe) : null };
 }
