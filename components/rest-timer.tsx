@@ -97,43 +97,36 @@ export function RestTimer({
   // свёрнутый режим: компактная плашка над нижней панелью, контент виден
   if (minimized) {
     return (
-      <button
-        type="button"
-        onClick={() => setMinimized(false)}
-        className="fixed bottom-20 right-4 z-50 flex items-center gap-3 rounded-full border border-border bg-card px-4 py-2.5 shadow-lg"
-        aria-label="Развернуть таймер отдыха"
-      >
-        <span
-          className={`font-mono text-lg font-bold tabular-nums ${
-            remaining === 0 ? "text-primary" : "text-foreground"
-          }`}
+      <div className="fixed bottom-20 right-4 z-50 flex items-center gap-1 rounded-full border border-border bg-card py-1.5 pl-4 pr-1.5 shadow-lg">
+        <button
+          type="button"
+          onClick={() => setMinimized(false)}
+          className="flex items-center gap-2 py-1"
+          aria-label="Развернуть таймер отдыха"
         >
-          {fmt(remaining)}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {remaining === 0 ? "Время!" : "отдых"}
-        </span>
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            e.stopPropagation()
+          <span
+            className={`font-mono text-lg font-bold tabular-nums ${
+              remaining === 0 ? "text-primary" : "text-foreground"
+            }`}
+          >
+            {fmt(remaining)}
+          </span>
+          <span className="pr-1 text-xs text-muted-foreground">
+            {remaining === 0 ? "Время!" : "отдых"}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
             stop()
             onClose()
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.stopPropagation()
-              stop()
-              onClose()
-            }
-          }}
-          className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
+          className="flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
           aria-label="Закрыть таймер"
         >
           <X className="size-4" />
-        </span>
-      </button>
+        </button>
+      </div>
     )
   }
 
