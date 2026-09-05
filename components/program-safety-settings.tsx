@@ -123,20 +123,37 @@ export async function ProgramSafetySettings({
             />
           </label>
           <div className="space-y-1">
-            {checks.map(([name, label]) => (
-              <label
-                key={name}
-                className="flex min-h-11 items-start gap-3 py-2 text-sm leading-relaxed"
-              >
-                <input
-                  type="checkbox"
-                  name={name}
-                  defaultChecked={profile[name] === true}
-                  className="mt-1 size-5 shrink-0"
-                />
-                <span>{label}</span>
-              </label>
-            ))}
+            {checks.map(([name, label]) => {
+              // Решение о ветке 1ПМ по редакции 3.0 принимается повторно
+              // только в окне Ц20 (дни 153–160); раньше флажок недоступен.
+              const cycle20Locked =
+                name === "confirmedAtCycle20" &&
+                profile.confirmedAtCycle20 !== true &&
+                !(day >= 153 && day <= 160);
+              return (
+                <label
+                  key={name}
+                  className={`flex min-h-11 items-start gap-3 py-2 text-sm leading-relaxed ${cycle20Locked ? "opacity-60" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    name={name}
+                    defaultChecked={profile[name] === true}
+                    disabled={cycle20Locked}
+                    className="mt-1 size-5 shrink-0"
+                  />
+                  <span>
+                    {label}
+                    {cycle20Locked && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        — подтверждается в Ц20 (дни 153–160), сейчас день {day}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
           </div>
           <label className="block text-sm">
             Итоговая ветка

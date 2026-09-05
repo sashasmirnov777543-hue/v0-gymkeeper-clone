@@ -36,7 +36,12 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ policyError?: string }>;
+}) {
+  const { policyError } = await searchParams;
   const [stateRows, recoveries, rhrRows, reviews] = await Promise.all([
     db
       .select()
@@ -69,6 +74,16 @@ export default async function SettingsPage() {
         Календарь, рабочая база R, индивидуальные ограничения, RHR и резервная
         копия.
       </p>
+
+      {policyError && (
+        <section
+          role="alert"
+          className="mt-4 rounded-2xl border border-destructive/40 bg-destructive/10 p-4"
+        >
+          <p className="text-sm font-bold text-destructive">Не применено</p>
+          <p className="mt-1 text-sm leading-relaxed">{policyError}</p>
+        </section>
+      )}
 
       <section className="mt-5 rounded-2xl border border-border bg-card p-4">
         <div className="flex items-center gap-3">
