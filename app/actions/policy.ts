@@ -1,6 +1,7 @@
 "use server";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import {
   programState,
@@ -23,7 +24,23 @@ import {
 import { readSnapshot } from "@/lib/program/server";
 import { ACTIVE_PROGRAM_VERSION } from "@/lib/program/version";
 const yes = (f: FormData, k: string) => f.get(k) === "on";
+// Нарушение правила редакции 3.0: показывается пользователю баннером на
+// /settings вместо падения всей страницы (в production текст Error скрыт
+// за digest, и пользователь видел только «Не удалось загрузить данные»).
+class PolicyError extends Error {}
+async function runPolicyAction(run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    if (error instanceof PolicyError)
+      redirect(`/settings?policyError=${encodeURIComponent(error.message)}`);
+    throw error;
+  }
+}
 export async function saveSafetyProfile(form: FormData) {
+  await runPolicyAction(() => applySafetyProfile(form));
+}
+async function applySafetyProfile(form: FormData) {
   await requireAuth();
   const base = Number(form.get("baseKg"));
   const rawCap = String(form.get("loadCeilingKg") ?? "").trim();
@@ -44,7 +61,7 @@ export async function saveSafetyProfile(form: FormData) {
     support < 0 ||
     support > 6
   )
-    throw new Error("Проверьте базу, предел и доступный шаг веса.");
+    throw new PolicyError("Проверьте базу, предел и доступный шаг веса.");
   await db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT profile_key FROM program_state WHERE profile_key='primary' FOR UPDATE`,
@@ -57,15 +74,15 @@ export async function saveSafetyProfile(form: FormData) {
     const prior = safetyProfile(state?.safetyProfile);
     const day = state?.currentProgramDay ?? 1;
     if (prior.baseConfirmed && base > Number(state?.rmrefKg ?? 115))
-      throw new Error(
+      throw new PolicyError(
         "Повышение R выполняется отдельно по контролю и двум обычным сессиям.",
       );
     const direct = form.get("testBranch") === "direct_1rm";
     if (direct && !prior.selectedBeforeCycle17 && day >= 129)
-      throw new Error("Отдельную ветку 1ПМ нужно выбрать до Ц17.");
+      throw new PolicyError("Отдельную ветку 1ПМ нужно выбрать до Ц17.");
     const confirmed = yes(form, "confirmedAtCycle20");
     if (confirmed && !prior.confirmedAtCycle20 && (day < 153 || day > 160))
-      throw new Error("Повторное решение принимается в Ц20, не заранее.");
+      throw new PolicyError("Повторное решение принимается в Ц20, не заранее.");
     const next = safetyProfile({
       reviewed: yes(form, "reviewed"),
       baseConfirmed: yes(form, "baseConfirmed"),
@@ -84,7 +101,7 @@ export async function saveSafetyProfile(form: FormData) {
       optionalLegs: yes(form, "optionalLegs"),
     });
     if (direct && (!next.singlesAllowed || !next.directOneRmAllowed))
-      throw new Error(
+      throw new PolicyError(
         "Для этой ветки нужны отдельно согласованные подготовительные синглы и тест.",
       );
     await tx
@@ -109,10 +126,13 @@ export async function saveSafetyProfile(form: FormData) {
   revalidatePath("/session", "layout");
 }
 export async function reviewBase(form: FormData) {
+  await runPolicyAction(() => applyReviewBase(form));
+}
+async function applyReviewBase(form: FormData) {
   await requireAuth();
   const proposed = Number(form.get("proposedRmrefKg"));
   if (!Number.isFinite(proposed) || proposed <= 0 || proposed > 500)
-    throw new Error("Некорректная предложенная база R.");
+    throw new PolicyError("Некорректная предложенная база R.");
   const ids = ["controlSessionId", "ordinarySessionId1", "ordinarySessionId2"]
     .map((k) => Number(form.get(k)))
     .filter((n) => Number.isInteger(n) && n > 0);
@@ -249,7 +269,7 @@ export async function reviewBase(form: FormData) {
       });
     }
     if (proposed > current && !profile.baseConfirmed)
-      throw new Error(
+      throw new PolicyError(
         "Сначала задайте подтверждённый исходный ориентир, а не повышение из неполных данных.",
       );
     const decision = reviewTrainingBase({
@@ -259,7 +279,7 @@ export async function reviewBase(form: FormData) {
       evidence,
       baseConfirmed: profile.baseConfirmed,
     });
-    if (!decision.allowed) throw new Error(decision.reasons.join(" "));
+    if (!decision.allowed) throw new PolicyError(decision.reasons.join(" "));
     const changed = await tx
       .update(programState)
       .set({ rmrefKg: String(proposed), updatedAt: new Date() })
@@ -271,7 +291,7 @@ export async function reviewBase(form: FormData) {
       )
       .returning({ key: programState.profileKey });
     if (!changed.length)
-      throw new Error("База изменилась; повторите проверку.");
+      throw new PolicyError("База изменилась; повторите проверку.");
     await tx.insert(rmrefReviewEvents).values({
       checkpoint: `day-${state?.currentProgramDay ?? 1}`,
       previousRmrefKg: String(current),
