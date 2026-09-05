@@ -20,7 +20,7 @@ const PATCH_KEYS: Record<CoachProposal["kind"], readonly string[]> = {
   recovery_days: ["afterProgramDay", "days", "reason"],
   cardio_adjustment: ["minutes", "zone", "replaceWithWalk", "skip"],
   rmref_review: ["checkpoint", "proposedRmrefKg", "evidenceSessionIds"],
-  test_postponement: ["delayHours", "delayDays", "endBlockWithoutTest"],
+  test_postponement: ["endBlockWithoutTest"],
   note_only: ["note"],
 };
 
@@ -29,7 +29,9 @@ export type ProposalValidation = Readonly<{
   errors: readonly string[];
 }>;
 
-export function validateCoachProposal(proposal: CoachProposal): ProposalValidation {
+export function validateCoachProposal(
+  proposal: CoachProposal,
+): ProposalValidation {
   const errors: string[] = [];
   if (!ALLOWED_KINDS.has(proposal.kind)) errors.push("unsupported-kind");
   if (!proposal.target.trim()) errors.push("missing-target");
@@ -45,6 +47,13 @@ export function validateCoachProposal(proposal: CoachProposal): ProposalValidati
   ) {
     errors.push("invalid-expiry");
   }
+  if (
+    ["session_adjustment", "cardio_adjustment", "test_postponement"].includes(
+      proposal.kind,
+    ) &&
+    !/^v4:(h2|v9)-\d+-b[1234]$/.test(proposal.target)
+  )
+    errors.push("active-workout-target-required");
   const keys = Object.keys(proposal.patch);
   const allowed = new Set(PATCH_KEYS[proposal.kind] ?? []);
   for (const key of keys) {
@@ -63,11 +72,7 @@ export function validateCoachProposal(proposal: CoachProposal): ProposalValidati
   }
   if (proposal.kind === "session_adjustment") {
     const reduction = proposal.patch.weightReductionPercent;
-    if (
-      reduction !== undefined &&
-      reduction !== 2.5 &&
-      reduction !== 5
-    ) {
+    if (reduction !== undefined && reduction !== 2.5 && reduction !== 5) {
       errors.push("weight-reduction-must-be-2.5-or-5");
     }
     const remove = proposal.patch.removeWorkingSets;
@@ -90,15 +95,22 @@ export function validateCoachProposal(proposal: CoachProposal): ProposalValidati
   }
   if (proposal.kind === "rmref_review") {
     const checkpoint = proposal.patch.checkpoint;
-    if (!new Set(["h2-9", "v9-4", "v9-8"]).has(String(checkpoint))) {
+    if (
+      !new Set(["h2-1", "h2-5", "h2-9", "v9-5", "v9-11", "v9-13"]).has(
+        String(checkpoint),
+      )
+    ) {
       errors.push("invalid-rmref-checkpoint");
     }
     const evidence = proposal.patch.evidenceSessionIds;
-    if (!Array.isArray(evidence) || new Set(evidence.map(String)).size < 2) {
-      errors.push("two-distinct-evidence-sessions-required");
+    if (!Array.isArray(evidence) || new Set(evidence.map(String)).size < 3) {
+      errors.push("control-and-two-ordinary-sessions-required");
     }
   }
-  if (proposal.safety.readinessLevel === "red" && proposal.kind !== "note_only") {
+  if (
+    proposal.safety.readinessLevel === "red" &&
+    proposal.kind !== "note_only"
+  ) {
     errors.push("red-readiness-cannot-create-training-change");
   }
 

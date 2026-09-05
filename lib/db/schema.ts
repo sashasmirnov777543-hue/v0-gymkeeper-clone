@@ -89,6 +89,7 @@ export const sessions = pgTable("sessions", {
   cardioResistance: text("cardio_resistance"),
   cardioRpe: integer("cardio_rpe"),
   cardioTalkTest: text("cardio_talk_test"),
+  supportLog: jsonb("support_log"),
   cardioSymptoms: text("cardio_symptoms"),
   cardioOverheating: integer("cardio_overheating"),
   cardioFeeling: integer("cardio_feeling"),
@@ -174,7 +175,9 @@ export const tmChangeHistory = pgTable("tm_change_history", {
   amrapWeight: numeric("amrap_weight"),
   amrapReps: integer("amrap_reps"),
   e1rm: numeric("e1rm"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const syncOps = pgTable("sync_ops", {
@@ -187,14 +190,17 @@ export const syncOps = pgTable("sync_ops", {
 
 export const programState = pgTable("program_state", {
   profileKey: text("profile_key").primaryKey().default("primary"),
-  programVersion: text("program_version").notNull().default("h2-v9-3.0"),
+  programVersion: text("program_version").notNull().default("h2-v9-4.0"),
   startDate: date("start_date"),
   currentProgramDay: integer("current_program_day").notNull().default(1),
   rmrefKg: numeric("rmref_kg").notNull().default("115"),
   testDate: date("test_date"),
   /** Уровень медицинского допуска редакции 2.0: level_1 | level_2 | level_3. */
+  safetyProfile: jsonb("safety_profile").notNull().default({}),
   clearanceLevel: text("clearance_level").notNull().default("level_1"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const recoveryInsertions = pgTable("recovery_insertions", {
@@ -202,7 +208,9 @@ export const recoveryInsertions = pgTable("recovery_insertions", {
   afterProgramDay: integer("after_program_day").notNull(),
   days: integer("days").notNull(),
   reason: text("reason"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const rhrMeasurements = pgTable("rhr_measurements", {
@@ -213,7 +221,9 @@ export const rhrMeasurements = pgTable("rhr_measurements", {
   comparable: boolean("comparable").notNull().default(true),
   poorWellbeing: boolean("poor_wellbeing").notNull().default(false),
   notes: text("notes"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const rmrefReviewEvents = pgTable("rmref_review_events", {
@@ -224,7 +234,9 @@ export const rmrefReviewEvents = pgTable("rmref_review_events", {
   status: text("status").notNull().default("pending"),
   evidence: jsonb("evidence").notNull(),
   reasons: jsonb("reasons").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
 });
 
@@ -235,7 +247,9 @@ export const sessionGateDecisions = pgTable("session_gate_decisions", {
   allowed: boolean("allowed").notNull(),
   inputs: jsonb("inputs").notNull(),
   reasons: jsonb("reasons").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const coachMessages = pgTable("coach_messages", {
@@ -245,7 +259,9 @@ export const coachMessages = pgTable("coach_messages", {
   model: text("model"),
   requestId: text("request_id"),
   metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const coachProposals = pgTable("coach_proposals", {
@@ -258,7 +274,9 @@ export const coachProposals = pgTable("coach_proposals", {
   rationale: text("rationale").notNull(),
   patch: jsonb("patch").notNull(),
   safety: jsonb("safety").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
   appliedAt: timestamp("applied_at", { withTimezone: true }),

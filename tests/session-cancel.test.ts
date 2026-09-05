@@ -21,9 +21,21 @@ test("обе сессии дают отменить начатую тренир�
   for (const path of [STRENGTH, CARDIO]) {
     const source = read(path);
     assert.match(source, /Отменить тренировку/, `${path}: нет кнопки отмены`);
-    assert.match(source, /cancelSession/, `${path}: не вызывает серверную отмену`);
-    assert.match(source, /cancelLocalSession/, `${path}: не отменяет офлайн-сессию`);
-    assert.match(source, /kind: "cancel"/, `${path}: не кладёт отмену в очередь при офлайне`);
+    assert.match(
+      source,
+      /cancelSession/,
+      `${path}: не вызывает серверную отмену`,
+    );
+    assert.match(
+      source,
+      /cancelLocalSession/,
+      `${path}: не отменяет офлайн-сессию`,
+    );
+    assert.match(
+      source,
+      /kind:\s*"cancel"/,
+      `${path}: не кладёт отмену в очередь при офлайне`,
+    );
   }
 });
 
@@ -45,7 +57,11 @@ test("на красном статусе кардио всё ещё можно �
   );
   assert.match(footer, /Отменить тренировку/, "в подвале нет кнопки отмены");
   // Управление таймером на красном по-прежнему скрыто — тренироваться нельзя.
-  assert.match(footer, /\{!blocked && \(/, "таймер должен скрываться на красном статусе");
+  assert.match(
+    footer,
+    /\{!blocked && \(/,
+    "таймер должен скрываться на красном статусе",
+  );
   assert.ok(
     footer.indexOf("Отменить тренировку") > footer.indexOf("{!blocked && ("),
     "отмена должна быть вне блока, скрываемого на красном статусе",

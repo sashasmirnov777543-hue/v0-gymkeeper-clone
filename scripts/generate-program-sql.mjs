@@ -3,15 +3,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const sourcePath = join(root, "lib/program/h2-v9-v3.json");
-const outputPath = join(root, "migrations/014_seed_h2_v9_v3.sql");
+const sourcePath = join(root, "lib/program/h2-v9-v4.json");
+const outputPath = join(root, "migrations/016_seed_h2_v9_v4.sql");
 
 /**
  * Уникальные индексы workouts.program_key и workout_exercises.program_key НЕ версионированы.
  * Без префикса upsert редакции 2.0 переписал бы строки редакции 1.0 прямо на месте
  * и переподчинил бы их новым циклам. Префикс делает ключи непересекающимися.
  */
-const KEY_PREFIX = "v3:";
+const KEY_PREFIX = "v4:";
 const pk = (id) => `${KEY_PREFIX}${id}`;
 const program = JSON.parse(readFileSync(sourcePath, "utf8"));
 
@@ -42,17 +42,43 @@ function weightText(exercise) {
   const example = rangeText(exercise.exampleKg, " кг");
   const rpe = rangeText(exercise.targetRpe, " RPE");
   const rir = rangeText(exercise.targetRir, " RIR");
-  if (percent && example) return `${percent} · при RMref ${program.defaultRmrefKg}: ${example}`;
+  if (example)
+    return `${example} · стартовый пример при R=${program.defaultRmrefKg}`;
   return percent ?? rpe ?? rir ?? null;
 }
 
 function restSeconds(exercise) {
+  if (Number.isFinite(exercise.restSeconds)) return exercise.restSeconds;
   const marker = `${exercise.key} ${exercise.role}`.toLowerCase();
-  if (marker.includes("single") || marker.includes("test") || marker.includes("calibration")) return 300;
-  if (marker.includes("primary") || /соревновательный|паузный жим|жим лёжа/.test(exercise.name.toLowerCase())) return 240;
-  if (marker.includes("secondary") || marker.includes("spoto") || marker.includes("close_grip")) return 180;
-  if (marker.includes("pull") || marker.includes("row") || marker.includes("upper_back")) return 150;
-  if (marker.includes("rehab") || marker.includes("face_pull") || marker.includes("rotation")) return 60;
+  if (
+    marker.includes("single") ||
+    marker.includes("test") ||
+    marker.includes("calibration")
+  )
+    return 300;
+  if (
+    marker.includes("primary") ||
+    /соревновательный|паузный жим|жим лёжа/.test(exercise.name.toLowerCase())
+  )
+    return 240;
+  if (
+    marker.includes("secondary") ||
+    marker.includes("spoto") ||
+    marker.includes("close_grip")
+  )
+    return 180;
+  if (
+    marker.includes("pull") ||
+    marker.includes("row") ||
+    marker.includes("upper_back")
+  )
+    return 150;
+  if (
+    marker.includes("rehab") ||
+    marker.includes("face_pull") ||
+    marker.includes("rotation")
+  )
+    return 60;
   return 90;
 }
 
@@ -67,13 +93,15 @@ function macrocycle(block, cycle) {
 }
 
 const lines = [
-  "-- 014: Жимовая программа, редакция 2.1. Сгенерировано из lib/program/h2-v9-v3.json.",
-  "-- Идемпотентный upsert по префиксованным ключам v3:. Строки редакций 1.0 и 2.0 и история сессий не затрагиваются.",
+  "-- 016: Жимовая программа, редакция 3.0. Сгенерировано из lib/program/h2-v9-v4.json.",
+  "-- Идемпотентный upsert по префиксованным ключам v4:. Строки редакций 1.0, 2.0 и 2.1 и история сессий не затрагиваются.",
   "",
 ];
 
 for (const [cycleIndex, cycle] of program.cycles.entries()) {
-  const cycleNotes = [cycle.objective, ...(cycle.rules ?? [])].filter(Boolean).join("\n\n");
+  const cycleNotes = [cycle.objective, ...(cycle.rules ?? [])]
+    .filter(Boolean)
+    .join("\n\n");
   lines.push(`-- ${cycle.id} ${cycle.name}`);
   lines.push(
     `INSERT INTO cycles (number, name, macrocycle, notes, sort_order, block, program_version, program_key, day_offset, checkpoint, rules) VALUES (` +
@@ -106,9 +134,15 @@ for (const [cycleIndex, cycle] of program.cycles.entries()) {
       ),
     ];
     for (const [exerciseIndex, exercise] of seededExercises.entries()) {
-      const comments = [exercise.condition, ...(exercise.notes ?? [])].filter(Boolean).join("\n");
-      const targetRirMin = Number.isInteger(exercise.targetRir?.min) ? exercise.targetRir.min : null;
-      const targetRirMax = Number.isInteger(exercise.targetRir?.max) ? exercise.targetRir.max : null;
+      const comments = [exercise.condition, ...(exercise.notes ?? [])]
+        .filter(Boolean)
+        .join("\n");
+      const targetRirMin = Number.isInteger(exercise.targetRir?.min)
+        ? exercise.targetRir.min
+        : null;
+      const targetRirMax = Number.isInteger(exercise.targetRir?.max)
+        ? exercise.targetRir.max
+        : null;
       lines.push(
         `INSERT INTO workout_exercises (workout_id, sort_order, name, weight_text, pct_of_tm, target_reps, target_sets, target_rir_min, target_rir_max, comment, rest_seconds, program_key, role, pct_min, pct_max, example_kg_min, example_kg_max, target_rpe_min, target_rpe_max, is_optional, condition_code, exclude_from_tonnage, prescription) VALUES (` +
           `(SELECT id FROM workouts WHERE program_key=${q(pk(workout.id))}), ${exerciseIndex + 1}, ${q(exercise.name)}, ${q(weightText(exercise))}, ${exercise.percent?.min === exercise.percent?.max ? n(exercise.percent?.min) : "NULL"}, ${q(exercise.reps)}, ${q(exercise.sets)}, ${n(targetRirMin)}, ${n(targetRirMax)}, ${q(comments)}, ${restSeconds(exercise)}, ${q(pk(exercise.id))}, ${q(exercise.role)}, ${n(exercise.percent?.min)}, ${n(exercise.percent?.max)}, ${n(exercise.exampleKg?.min)}, ${n(exercise.exampleKg?.max)}, ${n(exercise.targetRpe?.min)}, ${n(exercise.targetRpe?.max)}, ${exercise.optional ? "true" : "false"}, ${q(exercise.condition)}, ${exercise.excludeFromTonnage ? "true" : "false"}, ${j(exercise)}) ` +

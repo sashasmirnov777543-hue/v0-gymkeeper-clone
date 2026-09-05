@@ -1,4 +1,5 @@
-import rawProgram from "./h2-v9-v4.json" with { type: "json" };
+// Historical revision 2.1 compatibility tests only; not used by active UI.
+import rawProgram from "./h2-v9-v3.json" with { type: "json" };
 import type {
   ProgramBlock,
   ProgramCycle,
@@ -7,7 +8,7 @@ import type {
   ProgramWorkout,
   WorkoutSlot,
 } from "./types.ts";
-import { validateProgram } from "./validate.ts";
+import { validateProgram } from "./legacy-validate.ts";
 
 export const H2_V9_PROGRAM = rawProgram as unknown as ProgramDefinition;
 export const H2_V9_PROGRAM_VALIDATION = validateProgram(H2_V9_PROGRAM);
@@ -47,9 +48,7 @@ export function getProgramExercise(exerciseId: string): ProgramExercise | null {
       const exercise = workout.exercises.find((item) => item.id === exerciseId);
       if (exercise) return exercise;
       for (const branch of workout.branches) {
-        const branchExercise = branch.exercises?.find(
-          (item) => item.id === exerciseId,
-        );
+        const branchExercise = branch.exercises?.find((item) => item.id === exerciseId);
         if (branchExercise) return branchExercise;
       }
     }

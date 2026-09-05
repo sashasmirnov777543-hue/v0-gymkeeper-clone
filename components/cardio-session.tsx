@@ -1,5 +1,6 @@
 "use client";
 
+import { cardioPlan } from "@/lib/program/policy";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -17,7 +18,11 @@ import { HeartRateBadge } from "@/components/heart-rate";
 import { useHeartRate, useWakeLock, averageBpmSince } from "@/lib/heart-rate";
 import { cancelSession, finishCardioSession } from "@/app/actions/workout";
 import { unlockAudio } from "@/lib/sound";
-import { cancelLocalSession, finishLocalCardioSession, pushOp } from "@/lib/offline";
+import {
+  cancelLocalSession,
+  finishLocalCardioSession,
+  pushOp,
+} from "@/lib/offline";
 import {
   elapsedSeconds,
   pauseClock,
@@ -51,6 +56,7 @@ export function CardioSession({
     resistance?: string | null;
     readinessLevel?: string | null;
     adaptationPlan?: unknown;
+    supportLog?: unknown;
     cardioRpe?: number | null;
     cardioTalkTest?: string | null;
     cardioSymptoms?: string | null;
@@ -72,7 +78,14 @@ export function CardioSession({
   const router = useRouter();
   const heartRate = useHeartRate();
   const readOnly = session.status !== "active";
-  const blocked = session.readinessLevel === "red";
+  const originalMinutes = Number(
+    (workout.prescription as { duration?: { min?: number } } | null)?.duration
+      ?.min ?? 0,
+  );
+  const blocked =
+    session.readinessLevel === "red" ||
+    session.readinessLevel === "orange" ||
+    originalMinutes === 0;
   useWakeLock(!readOnly && !blocked);
   const key = `gym:cardio-clock:${session.id}`;
   const prescription = (workout.prescription ?? {}) as {
@@ -87,67 +100,65 @@ export function CardioSession({
   };
   const coachPatch =
     session.adaptationPlan && typeof session.adaptationPlan === "object"
-      ? ((session.adaptationPlan as {
-          coachAdjustment?: { patch?: Record<string, unknown> };
-        }).coachAdjustment?.patch ?? {})
+      ? ((
+          session.adaptationPlan as {
+            coachAdjustment?: { patch?: Record<string, unknown> };
+          }
+        ).coachAdjustment?.patch ?? {})
       : {};
-  const readinessPlan = useMemo(() => {
-    if (session.readinessLevel === "yellow") {
-      return { zone: "Z1", min: 15, max: 20, note: "Жёлтый: Z1, прогулка или пропуск." };
-    }
-    if (session.readinessLevel === "orange") {
-      return { zone: "Z1", min: 10, max: 20, note: "Оранжевый: только при полном отсутствии симптомов; допустим отдых." };
-    }
-    if (blocked) return { zone: null, min: 0, max: 0, note: "Красный: кардио запрещено." };
-    if (coachPatch.skip === true) {
-      return { zone: null, min: 0, max: 0, note: "Подтверждённая корректировка: пропуск без компенсации." };
-    }
-    if (coachPatch.replaceWithWalk === true) {
-      const minutes = Number(coachPatch.minutes ?? 20);
-      return { zone: "walk", min: minutes, max: minutes, note: "Подтверждённая корректировка: лёгкая прогулка." };
-    }
-    if (Number.isFinite(coachPatch.minutes)) {
-      const minutes = Math.max(0, Math.min(60, Number(coachPatch.minutes)));
-      return {
-        zone: coachPatch.zone === "Z2" ? "Z2" : "Z1",
-        min: minutes,
-        max: minutes,
-        note: "Подтверждённая корректировка Gemini.",
+  const capped = cardioPlan(
+    originalMinutes,
+    session.readinessLevel ?? "green",
+    coachPatch,
+  );
+  const readinessPlan = {
+    min: capped.minutes,
+    max: capped.minutes,
+    zone: capped.blocked
+      ? null
+      : capped.light
+        ? "Z1"
+        : (prescription.cardio?.zone ?? workout.cardioZone ?? "Z1"),
+    note: capped.note,
+  };
+  const snapshot = (
+    session.adaptationPlan as {
+      revision30?: {
+        profile?: { supportMode?: number };
+        exercises?: Array<{
+          id: number;
+          role?: string;
+          name: string;
+          targetSets: string | null;
+          targetReps: string | null;
+          comment?: string | null;
+        }>;
       };
-    }
-    return {
-      zone: prescription.cardio?.zone ?? workout.cardioZone ?? "Z1",
-      min: prescription.duration?.min ?? 0,
-      max: prescription.duration?.max ?? prescription.duration?.min ?? 0,
-      note: prescription.cardio?.prescriptionText ?? workout.cardioMinutes ?? "По плану",
-    };
-  }, [
-    blocked,
-    prescription,
-    session.readinessLevel,
-    session.adaptationPlan,
-    workout.cardioMinutes,
-    workout.cardioZone,
-  ]);
-
+    } | null
+  )?.revision30;
+  const support = snapshot?.exercises?.filter((e) => e.role === "rehab") ?? [];
+  const [supportDone, setSupportDone] = useState<number[]>(
+    (session.supportLog as { completedIds?: number[] } | null)?.completedIds ??
+      [],
+  );
   const [clock, setClock] = useState<CardioClock | null>(null);
   const [now, setNow] = useState(Date.now());
   const [speed, setSpeed] = useState(session.speed ?? "");
   const [resistance, setResistance] = useState(session.resistance ?? "");
   const [modality, setModality] = useState(session.modality ?? "Велосипед");
-  const [warmupMinutes, setWarmupMinutes] = useState(
-    session.warmupMinutes ?? prescription.cardio?.warmupMinutes ?? 0,
+  const [warmupMinutes, setWarmupMinutes] = useState<number | null>(
+    session.warmupMinutes ?? null,
   );
-  const [mainMinutes, setMainMinutes] = useState(
-    session.mainMinutes ?? prescription.cardio?.mainMinutes?.min ?? readinessPlan.min,
+  const [mainMinutes, setMainMinutes] = useState<number | null>(
+    session.mainMinutes ?? null,
   );
-  const [cooldownMinutes, setCooldownMinutes] = useState(
-    session.cooldownMinutes ?? prescription.cardio?.cooldownMinutes ?? 0,
+  const [cooldownMinutes, setCooldownMinutes] = useState<number | null>(
+    session.cooldownMinutes ?? null,
   );
-  const [talk, setTalk] = useState<Talk>(
-    (session.cardioTalkTest as Talk) || "full_sentences",
+  const [talk, setTalk] = useState<Talk | null>(
+    (session.cardioTalkTest as Talk | null) ?? null,
   );
-  const [rpe, setRpe] = useState(session.cardioRpe ?? 2);
+  const [rpe, setRpe] = useState<number | null>(session.cardioRpe ?? null);
   const [symptoms, setSymptoms] = useState(session.cardioSymptoms ?? "");
   const [saveState, setSaveState] = useState<SaveState>("idle");
 
@@ -198,7 +209,7 @@ export function CardioSession({
   }
 
   async function finish() {
-    if (!clock || saveState === "saving" || blocked) return;
+    if (!clock || saveState === "saving") return;
     const timestamp = Date.now();
     const durationSeconds = elapsedSeconds(clock, timestamp);
     const data = {
@@ -210,6 +221,10 @@ export function CardioSession({
       warmupMinutes,
       mainMinutes,
       cooldownMinutes,
+      supportLog: {
+        completedIds: supportDone,
+        mode: snapshot?.profile?.supportMode ?? 0,
+      },
       cardioRpe: rpe,
       cardioTalkTest: talk,
       cardioSymptoms: symptoms.trim() || null,
@@ -254,7 +269,11 @@ export function CardioSession({
    * стоп-сигнала, оставалась активной навсегда.
    */
   async function cancel() {
-    if (!window.confirm("Отменить кардио-тренировку? Записанное время и параметры будут удалены.")) {
+    if (
+      !window.confirm(
+        "Отменить кардио-тренировку? Записанное время и параметры будут удалены.",
+      )
+    ) {
       return;
     }
     localStorage.removeItem(key);
@@ -278,11 +297,17 @@ export function CardioSession({
   return (
     <main className="mx-auto min-h-dvh w-full max-w-lg pb-48">
       <header className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <Link href={`/workout/${workout.id}`} className="grid size-10 place-items-center" aria-label="Назад">
+        <Link
+          href={`/workout/${workout.id}`}
+          className="grid size-11 place-items-center"
+          aria-label="Назад"
+        >
           <ArrowLeft className="size-5" />
         </Link>
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted-foreground">Цикл {cycle.number} — {cycle.name}</p>
+          <p className="text-sm text-muted-foreground">
+            Цикл {cycle.number} — {cycle.name}
+          </p>
           <b>{workout.title}</b>
         </div>
         <HeartRateBadge />
@@ -292,23 +317,36 @@ export function CardioSession({
         {blocked && (
           <section className="flex gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
             <AlertTriangle className="mt-0.5 size-5 shrink-0" />
-            <div><strong>Кардио заблокировано.</strong><p className="mt-1">Красный статус: не тренироваться и не разминаться «до нормы».</p></div>
+            <div>
+              <strong>Кардио заблокировано.</strong>
+              <p className="mt-1">{readinessPlan.note}</p>
+            </div>
           </section>
         )}
 
         <section className="rounded-2xl border border-border bg-card p-6 text-center">
           <small className="text-muted-foreground">ФАКТИЧЕСКОЕ ВРЕМЯ</small>
-          <div className="font-mono text-6xl font-bold">{formatTime(elapsed)}</div>
+          <div className="font-mono text-6xl font-bold">
+            {formatTime(elapsed)}
+          </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            План: {readinessPlan.min === readinessPlan.max ? readinessPlan.min : `${readinessPlan.min}–${readinessPlan.max}`} мин · {readinessPlan.zone ?? "отдых"}
+            План:{" "}
+            {readinessPlan.min === readinessPlan.max
+              ? readinessPlan.min
+              : `${readinessPlan.min}–${readinessPlan.max}`}{" "}
+            мин · {readinessPlan.zone ?? "отдых"}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">{readinessPlan.note}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {readinessPlan.note}
+          </p>
         </section>
 
         <section className="rounded-xl border border-primary/30 bg-primary/5 p-4">
           <b>Главный ориентир — разговорный тест</b>
           <p className="mt-1 text-sm text-muted-foreground">
-            Z1: свободный разговор. Z2: полные предложения, RPE 2–3/10. Если речь распадается на короткие фразы — снизьте сопротивление или перейдите в Z1. Пульс только справочный.
+            Z1: свободный разговор. Z2: полные предложения, RPE 2–3/10. Если
+            речь распадается на короткие фразы — снизьте сопротивление или
+            перейдите в Z1. Пульс только справочный.
           </p>
         </section>
 
@@ -316,36 +354,131 @@ export function CardioSession({
           <Input label="Модальность" value={modality} set={setModality} />
           <Input label="Скорость" value={speed} set={setSpeed} />
           <Input label="Сопротивление" value={resistance} set={setResistance} />
-          <div className="text-xs text-muted-foreground">
+          <div className="text-sm text-muted-foreground">
             Пульс
             <div className="mt-1 h-11 rounded-lg border border-input bg-background px-3 py-2 text-base text-foreground">
-              {heartRate.bpm != null ? `${heartRate.bpm} уд/мин` : "не подключён"}
+              {heartRate.bpm != null
+                ? `${heartRate.bpm} уд/мин`
+                : "не подключён"}
             </div>
           </div>
-          <NumberInput label="Разминка, мин" value={warmupMinutes} set={setWarmupMinutes} />
-          <NumberInput label="Основная Z1/Z2, мин" value={mainMinutes} set={setMainMinutes} />
-          <NumberInput label="Заминка, мин" value={cooldownMinutes} set={setCooldownMinutes} />
+          <NumberInput
+            label="Разминка, мин"
+            value={warmupMinutes}
+            set={setWarmupMinutes}
+          />
+          <NumberInput
+            label="Основная Z1/Z2, мин"
+            value={mainMinutes}
+            set={setMainMinutes}
+          />
+          <NumberInput
+            label="Заминка, мин"
+            value={cooldownMinutes}
+            set={setCooldownMinutes}
+          />
         </section>
 
         <section className="space-y-4 rounded-xl border border-border bg-card p-4">
           <b>Итог кардио</b>
-          {([
-            ["full_sentences", "Мог говорить полными предложениями"],
-            ["short_phrases", "Только короткими фразами — темп был выше цели"],
-            ["difficult", "Говорить было трудно — прекратить/снизить"],
-          ] as const).map(([value, label]) => (
-            <button key={value} type="button" onClick={() => setTalk(value)} className={`min-h-11 w-full rounded-lg border px-3 text-left text-sm ${talk === value ? "border-primary bg-primary/10" : "border-border"}`}>{label}</button>
+          {(
+            [
+              ["full_sentences", "Получалось говорить полными предложениями"],
+              [
+                "short_phrases",
+                "Только короткими фразами — темп был выше цели",
+              ],
+              ["difficult", "Говорить было трудно — прекратить/снизить"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTalk(value)}
+              className={`min-h-11 w-full rounded-lg border px-3 text-left text-sm ${talk === value ? "border-primary bg-primary/10" : "border-border"}`}
+            >
+              {label}
+            </button>
           ))}
-          <label className="block text-sm">Субъективная нагрузка: {rpe}/10
-            <input type="range" min="1" max="10" value={rpe} onChange={(event) => setRpe(Number(event.target.value))} className="mt-2 w-full" />
+          <label className="block text-sm">
+            Субъективная нагрузка: {rpe == null ? "не оценена" : `${rpe}/10`}
+            <input
+              type="range"
+              min="1"
+              max="10"
+              value={rpe ?? 2}
+              onChange={(event) => setRpe(Number(event.target.value))}
+              className="mt-2 w-full"
+            />
           </label>
-          <textarea value={symptoms} onChange={(event) => setSymptoms(event.target.value)} placeholder="Симптомы: нет или опишите…" className="min-h-20 w-full rounded-lg border border-input bg-background p-3" />
+          <textarea
+            value={symptoms}
+            onChange={(event) => setSymptoms(event.target.value)}
+            placeholder="Симптомы: нет или опишите…"
+            className="min-h-20 w-full rounded-lg border border-input bg-background p-3"
+          />
         </section>
 
+        {support.length > 0 && (
+          <section className="rounded-xl border border-border bg-card p-4">
+            <h2 className="text-lg font-bold">Необязательная поддержка</h2>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Сначала приостановите таймер: время комплекса не входит в кардио.
+              Один согласованный режим вместо исходного, не поверх него. Не
+              через боль.
+            </p>
+            <div className="mt-3 space-y-2">
+              {support.map((e) => (
+                <label
+                  key={e.id}
+                  className="flex min-h-11 items-start gap-3 text-sm leading-relaxed"
+                >
+                  <input
+                    type="checkbox"
+                    disabled={readOnly || blocked}
+                    checked={supportDone.includes(e.id)}
+                    onChange={(event) =>
+                      setSupportDone(
+                        event.target.checked
+                          ? [...supportDone, e.id]
+                          : supportDone.filter((id) => id !== e.id),
+                      )
+                    }
+                    className="mt-1 size-5 shrink-0"
+                  />
+                  <span>
+                    <strong>{e.name}</strong> · {e.targetSets}×{e.targetReps}
+                    <span className="block text-muted-foreground">
+                      Отметьте только фактически выполненное в согласованном
+                      объёме.
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </section>
+        )}
+        {!readOnly && elapsed > 0 && blocked && (
+          <Button className="min-h-12 w-full" onClick={finish}>
+            Сохранить фактическое время и завершить
+          </Button>
+        )}
         {saveState !== "idle" && (
-          <div className={`flex gap-2 rounded-lg p-3 text-sm ${saveState === "queued" ? "bg-warning/15 text-warning" : saveState === "error" ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success"}`}>
-            {saveState === "queued" ? <CloudOff className="size-4" /> : <CheckCircle2 className="size-4" />}
-            {saveState === "saving" ? "Сохраняю…" : saveState === "saved" ? "Сохранено" : saveState === "queued" ? "Ждёт синхронизации" : "Ошибка сохранения"}
+          <div
+            className={`flex gap-2 rounded-lg p-3 text-sm ${saveState === "queued" ? "bg-warning/15 text-warning" : saveState === "error" ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success"}`}
+          >
+            {saveState === "queued" ? (
+              <CloudOff className="size-4" />
+            ) : (
+              <CheckCircle2 className="size-4" />
+            )}
+            {saveState === "saving"
+              ? "Сохраняю…"
+              : saveState === "saved"
+                ? "Сохранено"
+                : saveState === "queued"
+                  ? "Ждёт синхронизации"
+                  : "Ошибка сохранения"}
           </div>
         )}
       </div>
@@ -357,14 +490,30 @@ export function CardioSession({
           {!blocked && (
             <div className="mx-auto flex max-w-lg gap-3">
               <Button variant="outline" className="flex-1" onClick={toggle}>
-                {running ? <><Pause /> Пауза</> : <><Play /> {elapsed > 0 ? "Продолжить" : "Старт"}</>}
+                {running ? (
+                  <>
+                    <Pause /> Пауза
+                  </>
+                ) : (
+                  <>
+                    <Play /> {elapsed > 0 ? "Продолжить" : "Старт"}
+                  </>
+                )}
               </Button>
-              <Button className="flex-[2]" onClick={finish} disabled={elapsed === 0}>
+              <Button
+                className="flex-[2]"
+                onClick={finish}
+                disabled={elapsed === 0}
+              >
                 <Square /> Завершить кардио
               </Button>
             </div>
           )}
-          <button type="button" onClick={cancel} className="mx-auto mt-2 block w-full max-w-lg text-center text-xs text-muted-foreground hover:text-destructive">
+          <button
+            type="button"
+            onClick={cancel}
+            className="mx-auto mt-2 block w-full max-w-lg text-center text-sm text-muted-foreground hover:text-destructive"
+          >
             Отменить тренировку
           </button>
         </div>
@@ -373,9 +522,48 @@ export function CardioSession({
   );
 }
 
-function Input({ label, value, set }: { label: string; value: string; set: (value: string) => void }) {
-  return <label className="text-xs text-muted-foreground">{label}<input value={value} onChange={(event) => set(event.target.value)} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 text-base text-foreground" /></label>;
+function Input({
+  label,
+  value,
+  set,
+}: {
+  label: string;
+  value: string;
+  set: (value: string) => void;
+}) {
+  return (
+    <label className="text-sm text-muted-foreground">
+      {label}
+      <input
+        value={value}
+        onChange={(event) => set(event.target.value)}
+        className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 text-base text-foreground"
+      />
+    </label>
+  );
 }
-function NumberInput({ label, value, set }: { label: string; value: number; set: (value: number) => void }) {
-  return <label className="text-xs text-muted-foreground">{label}<input type="number" min="0" max="180" value={value} onChange={(event) => set(Number(event.target.value))} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 text-base text-foreground" /></label>;
+function NumberInput({
+  label,
+  value,
+  set,
+}: {
+  label: string;
+  value: number | null;
+  set: (value: number | null) => void;
+}) {
+  return (
+    <label className="text-sm text-muted-foreground">
+      {label}
+      <input
+        type="number"
+        min="0"
+        max="180"
+        value={value ?? ""}
+        onChange={(event) =>
+          set(event.target.value === "" ? null : Number(event.target.value))
+        }
+        className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 text-base text-foreground"
+      />
+    </label>
+  );
 }

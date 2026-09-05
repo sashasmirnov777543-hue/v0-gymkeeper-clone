@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { ensureSchema } from "@/lib/db/migrate";
 import {
   cycles,
   loggedSets,
@@ -11,104 +10,36 @@ import {
   programState,
 } from "@/lib/db/schema";
 import {
-  getLastCardioSession,
+  finishSession,
+  cancelSession,
   getLastSetsByExerciseNames,
 } from "@/app/actions/workout";
 import { SessionLogger } from "@/components/session-logger";
 import { CardioSession } from "@/components/cardio-session";
-import { weightFromRmrefPercent } from "@/lib/program/rmref";
-import { getLastStandardTriple } from "@/app/actions/workout";
-import {
-  DEFAULT_CLEARANCE_LEVEL,
-  isClearanceLevel,
-  type ClearanceLevel,
-} from "@/lib/program/version";
+import { readSnapshot } from "@/lib/program/server";
+import { effectiveSafetyProfile, safetyProfile } from "@/lib/program/policy";
 
 export const dynamic = "force-dynamic";
-
 export default async function SessionPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const sessionId = Number.parseInt(id, 10);
-  if (Number.isNaN(sessionId)) notFound();
-
-  await ensureSchema();
-
+  const id = Number((await params).id);
+  if (!Number.isInteger(id) || id <= 0) notFound();
   const [session] = await db
     .select()
     .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .where(eq(sessions.id, id))
     .limit(1);
   if (!session) notFound();
-
   const [workout] = await db
     .select()
     .from(workouts)
     .where(eq(workouts.id, session.workoutId))
     .limit(1);
   if (!workout) notFound();
-
-  const [cardioCycleRow] =
-    workout.kind === "cardio"
-      ? await db
-          .select()
-          .from(cycles)
-          .where(eq(cycles.id, workout.cycleId))
-          .limit(1)
-      : [undefined];
-
-  if (workout.kind === "cardio") {
-    const lastCardioRow = await getLastCardioSession(workout.title, session.id);
-    const lastCardio = lastCardioRow
-      ? {
-          speed: lastCardioRow.speed,
-          resistance: lastCardioRow.resistance,
-          durationSeconds: lastCardioRow.durationSeconds,
-          startedAt: lastCardioRow.startedAt.toISOString(),
-        }
-      : null;
-    const cardioSession = {
-      id: session.id,
-      status: session.status,
-      startedAt: session.startedAt.toISOString(),
-      durationSeconds: session.durationSeconds,
-      speed: session.cardioSpeed,
-      resistance: session.cardioResistance,
-      readinessLevel: session.readinessLevel,
-      adaptationPlan: session.adaptationPlan,
-      cardioRpe: session.cardioRpe,
-      cardioTalkTest: session.cardioTalkTest,
-      cardioSymptoms: session.cardioSymptoms,
-      modality: session.cardioModality,
-      warmupMinutes: session.cardioWarmupMinutes,
-      mainMinutes: session.cardioMainMinutes,
-      cooldownMinutes: session.cardioCooldownMinutes,
-    };
-    const cardioWorkout = {
-      id: workout.id,
-      title: workout.title,
-      cardioZone: workout.cardioZone,
-      cardioMinutes: workout.cardioMinutes,
-      prescription: workout.prescription,
-    };
-    const cardioCycle = {
-      number: cardioCycleRow?.number ?? 0,
-      name: cardioCycleRow?.name ?? "",
-    };
-    return (
-      <CardioSession
-        session={cardioSession}
-        workout={cardioWorkout}
-        cycle={cardioCycle}
-        lastCardio={lastCardio}
-      />
-    );
-  }
-
-  const [[cycle], exercises, sets, stateRows] = await Promise.all([
+  const [[cycle], raw, sets, [state]] = await Promise.all([
     db.select().from(cycles).where(eq(cycles.id, workout.cycleId)).limit(1),
     db
       .select()
@@ -118,171 +49,138 @@ export default async function SessionPage({
     db
       .select()
       .from(loggedSets)
-      .where(eq(loggedSets.sessionId, sessionId))
+      .where(eq(loggedSets.sessionId, id))
       .orderBy(asc(loggedSets.id)),
-    db.select().from(programState).where(eq(programState.profileKey, "primary")).limit(1),
+    db
+      .select()
+      .from(programState)
+      .where(eq(programState.profileKey, "primary"))
+      .limit(1),
   ]);
-
-  const lastSetsByName = await getLastSetsByExerciseNames(
-    exercises.map((e) => e.name),
-  );
-
-  const rmrefKg = Number(stateRows[0]?.rmrefKg ?? 115);
-  // Нужна только там, где в сессии есть стандартизированная тройка.
-  const hasStandardTriple = exercises.some(
-    (item) => item.role === "calibration" || item.role === "test_triple",
-  );
-  const lastStandardTriple = hasStandardTriple ? await getLastStandardTriple() : null;
-  // Колонка допуска может ещё отсутствовать в состоянии программы — читаем мягко.
-  const programStateRow = stateRows[0];
-  const storedClearanceLevel =
-    programStateRow && "clearanceLevel" in programStateRow
-      ? programStateRow.clearanceLevel
-      : undefined;
-  const clearanceLevel: ClearanceLevel = isClearanceLevel(storedClearanceLevel)
-    ? storedClearanceLevel
-    : DEFAULT_CLEARANCE_LEVEL;
-  const adaptation =
-    session.adaptationPlan && typeof session.adaptationPlan === "object"
-      ? (session.adaptationPlan as {
-          coachAdjustment?: { patch?: Record<string, unknown> } | null;
-        })
-      : null;
-  const coachPatch = adaptation?.coachAdjustment?.patch ?? {};
-  const skippedExerciseIds = new Set(
-    Array.isArray(coachPatch.skipOptionalExerciseIds)
-      ? coachPatch.skipOptionalExerciseIds.map(String)
-      : [],
-  );
-  const weightReductionPercent =
-    coachPatch.weightReductionPercent === 2.5 || coachPatch.weightReductionPercent === 5
-      ? Number(coachPatch.weightReductionPercent)
-      : 0;
-  const removeWorkingSets = coachPatch.removeWorkingSets === 1 ? 1 : 0;
-  const sessionProp = {
-    id: session.id,
-    status: session.status,
-    startedAt: session.startedAt.toISOString(),
-    notes: session.notes,
-    readinessLevel: session.readinessLevel,
-    readinessReasons: session.readinessReasons,
-    adaptationPlan: session.adaptationPlan,
-    safetyStopped: session.safetyStopped,
-  };
-  const workoutProp = {
-    id: workout.id,
-    title: workout.title,
-    slot: workout.label,
-    branches: workout.branches,
-  };
-  const cycleProp = {
+  const snapshot = readSnapshot(session.adaptationPlan);
+  const profile = snapshot
+    ? session.status === "active"
+      ? effectiveSafetyProfile(
+          snapshot.profile,
+          safetyProfile(state?.safetyProfile),
+        )
+      : snapshot.profile
+    : safetyProfile(state?.safetyProfile);
+  const legacyActive = !snapshot && session.status === "active";
+  const status = legacyActive ? "legacy_read_only" : session.status;
+  const cycleProps = {
     number: cycle?.number ?? 0,
     name: cycle?.name ?? "",
-    block: cycle?.block ?? "v9",
+    block: cycle?.block ?? "h2",
   };
-
-  let visibleExercises = exercises.filter((exercise) => {
-    if (
-      skippedExerciseIds.has(String(exercise.id)) ||
-      (exercise.programKey && skippedExerciseIds.has(exercise.programKey))
-    ) {
-      return false;
-    }
-    if (coachPatch.stopSecondaryPressing === true && exercise.role.includes("secondary")) {
-      return false;
-    }
-    if (exercise.role.includes("direct_1rm")) {
-      return session.testBranch === "direct_1rm";
-    }
-    if (exercise.role.includes("test_triple")) {
-      return session.testBranch === "triple" || session.testBranch == null;
-    }
-    return true;
-  });
-  if (session.readinessLevel === "red") {
-    visibleExercises = [];
-  } else if (session.readinessLevel === "orange") {
-    const primary = exercises.find(
-      (exercise) =>
-        exercise.role.includes("primary") ||
-        /соревновательный.*жим|жим лёжа с паузой|паузный жим/i.test(exercise.name),
+  const legacyNotice = legacyActive ? (
+    <section className="mx-auto max-w-lg space-y-3 border-b border-warning/40 bg-warning/10 p-4 text-sm">
+      <h1 className="text-lg font-bold">Сессия прошлой редакции</h1>
+      <p>
+        Записанные результаты сохранены без пересчёта. Завершите или отмените
+        эту сессию, затем откройте новую программу. Новые нагрузки старой
+        редакции не подставляются.
+      </p>
+      <div className="flex gap-3">
+        <form action={finishSession.bind(null, session.id)}>
+          <button className="min-h-11 rounded-lg border border-border px-3">
+            Завершить и сохранить
+          </button>
+        </form>
+        <form action={cancelSession.bind(null, session.id)}>
+          <button className="min-h-11 rounded-lg border border-border px-3">
+            Отменить активную сессию
+          </button>
+        </form>
+      </div>
+    </section>
+  ) : null;
+  if (workout.kind === "cardio")
+    return (
+      <>
+        {legacyNotice}
+        <CardioSession
+          session={{
+            id: session.id,
+            status,
+            startedAt: session.startedAt.toISOString(),
+            durationSeconds: session.durationSeconds,
+            speed: session.cardioSpeed,
+            resistance: session.cardioResistance,
+            readinessLevel: session.readinessLevel,
+            adaptationPlan: session.adaptationPlan,
+            cardioRpe: session.cardioRpe,
+            cardioTalkTest: session.cardioTalkTest,
+            cardioSymptoms: session.cardioSymptoms,
+            supportLog: session.supportLog,
+            modality: session.cardioModality,
+            warmupMinutes: session.cardioWarmupMinutes,
+            mainMinutes: session.cardioMainMinutes,
+            cooldownMinutes: session.cardioCooldownMinutes,
+          }}
+          workout={{
+            id: workout.id,
+            title: workout.title,
+            cardioZone: workout.cardioZone,
+            cardioMinutes: workout.cardioMinutes,
+            prescription: workout.prescription,
+          }}
+          cycle={cycleProps}
+        />
+      </>
     );
-    visibleExercises = primary ? [primary] : [];
-  } else if (session.readinessLevel === "yellow") {
-    visibleExercises = exercises.filter(
-      (exercise) =>
-        !exercise.isOptional &&
-        !exercise.role.includes("single") &&
-        !exercise.role.includes("test") &&
-        !exercise.role.includes("calibration"),
-    );
-  }
-
-  const reduceSetsText = (value: string | null) => {
-    if (!value || removeWorkingSets === 0 || !/^\d+$/.test(value.trim())) return value;
-    return String(Math.max(1, Number(value) - removeWorkingSets));
-  };
-  const exercisesProp = visibleExercises.map((e) => {
-    const orangeTechnique = session.readinessLevel === "orange";
-    const pctMin = e.pctMin != null ? Number(e.pctMin) : null;
-    const pctMax = e.pctMax != null ? Number(e.pctMax) : null;
-    const adjustedWeightText =
-      weightReductionPercent > 0 && pctMin != null
-        ? `${weightFromRmrefPercent(rmrefKg, pctMin * (1 - weightReductionPercent / 100))}${pctMax != null && pctMax !== pctMin ? `–${weightFromRmrefPercent(rmrefKg, pctMax * (1 - weightReductionPercent / 100))}` : ""} кг · подтверждённое снижение ${weightReductionPercent}%`
-        : e.weightText;
-    return {
+  // New sessions use their immutable start snapshot. Archived rows never use today's R.
+  const exercises =
+    snapshot?.exercises ??
+    raw.map((e) => ({
       id: e.id,
       name: e.name,
-      weightText: orangeTechnique
-        ? `50–65% RMref · ${weightFromRmrefPercent(rmrefKg, 50)}–${weightFromRmrefPercent(rmrefKg, 65)} кг`
-        : adjustedWeightText,
-      tempo: e.tempo,
-      targetReps: orangeTechnique ? "3" : e.targetReps,
-      targetSets: orangeTechnique ? "2–3" : reduceSetsText(e.targetSets),
-      targetRirMin: orangeTechnique ? 4 : e.targetRirMin,
-      targetRirMax: orangeTechnique ? 5 : e.targetRirMax,
-      targetRpeMin: e.targetRpeMin != null ? Number(e.targetRpeMin) : null,
-      targetRpeMax: e.targetRpeMax != null ? Number(e.targetRpeMax) : null,
+      weightText: e.weightText,
+      targetSets: e.targetSets,
+      targetReps: e.targetReps,
+      targetRirMin: e.targetRirMin,
+      targetRirMax: e.targetRirMax,
+      targetRpeMin: e.targetRpeMin == null ? null : Number(e.targetRpeMin),
+      targetRpeMax: e.targetRpeMax == null ? null : Number(e.targetRpeMax),
       role: e.role,
       isOptional: e.isOptional,
       condition: e.conditionCode,
-      percentMin: e.pctMin != null ? Number(e.pctMin) : null,
-      percentMax: e.pctMax != null ? Number(e.pctMax) : null,
       comment: e.comment,
       restSeconds: e.restSeconds,
-    };
-  });
-  const initialSetsProp = sets.map((s) => ({
-    id: s.id,
-    workoutExerciseId: s.workoutExerciseId,
-    setNumber: s.setNumber,
-    weight: s.weight != null ? Number.parseFloat(s.weight) : null,
-    reps: s.reps,
-    rir: s.rir,
-    rpe: s.rpe != null ? Number(s.rpe) : null,
-    velocity: s.velocity,
-    stickingPoint: s.stickingPoint,
-    isWarmup: s.isWarmup,
-    pauseQuality: s.pauseQuality,
-    touchPoint: s.touchPoint,
-    trajectoryQuality: s.trajectoryQuality,
-    techniqueSigns: s.techniqueSigns,
-    painScore: s.painScore,
-    symptoms: s.symptoms,
-    videoUrl: s.videoUrl,
-  }));
-
+      tempo: e.tempo,
+    }));
+  const last = await getLastSetsByExerciseNames(exercises.map((e) => e.name));
   return (
-    <SessionLogger
-      session={sessionProp}
-      workout={workoutProp}
-      cycle={cycleProp}
-      exercises={exercisesProp}
-      initialSets={initialSetsProp}
-      lastSetsByName={lastSetsByName}
-      clearanceLevel={clearanceLevel}
-      rmrefKg={rmrefKg}
-      lastStandardTriple={lastStandardTriple}
-    />
+    <>
+      {legacyNotice}
+      <SessionLogger
+        session={{
+          id: session.id,
+          status,
+          startedAt: session.startedAt.toISOString(),
+          notes: session.notes,
+          readinessLevel: session.readinessLevel,
+          readinessReasons: session.readinessReasons,
+          adaptationPlan: session.adaptationPlan,
+          safetyStopped: session.safetyStopped,
+        }}
+        workout={{
+          id: workout.id,
+          title: workout.title,
+          slot: workout.label,
+          branches: workout.branches,
+        }}
+        cycle={cycleProps}
+        exercises={exercises}
+        initialSets={sets.map((s) => ({
+          ...s,
+          weight: s.weight == null ? null : Number(s.weight),
+          rpe: s.rpe == null ? null : Number(s.rpe),
+        }))}
+        lastSetsByName={last}
+        rmrefKg={snapshot?.baseKg ?? Number(state?.rmrefKg ?? 115)}
+        profile={profile}
+      />
+    </>
   );
 }

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { H2_V9_PROGRAM, listProgramWorkouts } from "../lib/program/index.ts";
-import { CLEARANCE_CEILING_PERCENT, actualPercentOfRmref } from "../lib/program/gates.ts";
+import {
+  H2_V9_PROGRAM,
+  listProgramWorkouts,
+} from "../lib/program/legacy-v21.ts";
+import {
+  CLEARANCE_CEILING_PERCENT,
+  actualPercentOfRmref,
+} from "../lib/program/gates.ts";
 import {
   BASELINE_CHECKPOINT,
   RMREF_MAX_STEP_KG,
@@ -39,7 +45,8 @@ function firstSetRpe(reps: number, actualPercent: number): number | null {
   return 10;
 }
 
-const allExercises = () => listProgramWorkouts().flatMap((workout) => workout.exercises);
+const allExercises = () =>
+  listProgramWorkouts().flatMap((workout) => workout.exercises);
 
 test("целевой RPE пересчитывается от веса на штанге, а не от подписи в процентах", () => {
   // В 2.0 rpeOf() получал номинальный процент, а kg() округлял отдельно, и они
@@ -72,7 +79,9 @@ test("целевой RPE пересчитывается от веса на шт�
 test("ниже валидированной шкалы числовой цели нет вместо выдуманной", () => {
   // В 2.0 половина ячеек столбца RPE лежала за пределами шкалы, включая −1,2 и −4,1;
   // генератор зажимал их в 4, а текст заметки печатал незажатое значение.
-  const belowScale = allExercises().filter((exercise) => exercise.belowScale === true);
+  const belowScale = allExercises().filter(
+    (exercise) => exercise.belowScale === true,
+  );
   assert.ok(belowScale.length > 0, "лёгкие подходы в программе есть");
   for (const exercise of belowScale) {
     assert.equal(exercise.targetRpe, null, exercise.id);
@@ -94,8 +103,13 @@ test("текст заметок не расходится с записанны�
         const min = exercise.targetRpe?.min ?? null;
         const max = exercise.targetRpe?.max ?? null;
         if (min === null || max === null) {
-          drift.push(`${exercise.id}: заметка обещает ${value} при отсутствии цели`);
-        } else if (Math.abs(value - min) > 0.06 && Math.abs(value - max) > 0.06) {
+          drift.push(
+            `${exercise.id}: заметка обещает ${value} при отсутствии цели`,
+          );
+        } else if (
+          Math.abs(value - min) > 0.06 &&
+          Math.abs(value - max) > 0.06
+        ) {
           drift.push(`${exercise.id}: заметка ${value}, цель ${min}–${max}`);
         }
       }
@@ -159,7 +173,11 @@ test("длинная Z2-сессия стоит перед лёгким заль
     assert.ok(b1 && b3, cycle.id);
     const b1Minutes = b1.duration?.max ?? 0;
     const b3Minutes = b3.duration?.max ?? 0;
-    assert.notEqual(b1.cardio?.zone, "Z2", `${cycle.id}: Z2 не должна стоять перед B2`);
+    assert.notEqual(
+      b1.cardio?.zone,
+      "Z2",
+      `${cycle.id}: Z2 не должна стоять перед B2`,
+    );
     // Тест-цикл — единственное исключение: B1 перед тестом это полный отдых.
     if (cycle.id === "v9-13") continue;
     assert.ok(
@@ -190,7 +208,10 @@ test("реаб-блок проходит шесть ступеней, а не с
       cycles.includes(H2_V9_PROGRAM.cycles[cycleIndex]!.id),
     );
   for (let i = 1; i < H2_V9_PROGRAM.cycles.length; i += 1) {
-    assert.ok(stageOf(i) >= stageOf(i - 1), `ступень не откатывается на цикле ${i + 1}`);
+    assert.ok(
+      stageOf(i) >= stageOf(i - 1),
+      `ступень не откатывается на цикле ${i + 1}`,
+    );
   }
 });
 
@@ -242,17 +263,26 @@ test("объём силового блока остаётся в диапазо�
           (perCycle, workout) =>
             perCycle +
             workout.exercises.reduce((perWorkout, exercise) => {
-              if (exercise.role === "calibration" || exercise.role === "test_triple") {
+              if (
+                exercise.role === "calibration" ||
+                exercise.role === "test_triple"
+              ) {
                 return perWorkout + 1;
               }
               const percent = exercise.percent?.min ?? null;
-              return perWorkout + (percent !== null && percent >= 80 ? Number(exercise.sets) : 0);
+              return (
+                perWorkout +
+                (percent !== null && percent >= 80 ? Number(exercise.sets) : 0)
+              );
             }, 0),
           0,
         ),
       0,
     );
   const perWeek = (strength * 7) / 104;
-  assert.ok(perWeek >= 3 && perWeek <= 6, `${perWeek.toFixed(2)} сет/нед вне диапазона 3–6`);
+  assert.ok(
+    perWeek >= 3 && perWeek <= 6,
+    `${perWeek.toFixed(2)} сет/нед вне диапазона 3–6`,
+  );
   assert.ok(perWeek > 4.51, "доза выше редакции 2.0");
 });

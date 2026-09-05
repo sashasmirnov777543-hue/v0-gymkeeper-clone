@@ -157,10 +157,10 @@ test("permitted actions encode the full traffic-light restrictions", () => {
   );
   assert.deepEqual(
     READINESS_ACTIONS.yellow.training.adjustment.weightReductionPercent,
-    [2.5, 5],
+    [5, 5],
   );
   assert.equal(READINESS_ACTIONS.yellow.training.adjustment.setsToRemove, 1);
-  assert.deepEqual(READINESS_ACTIONS.yellow.cardio.minutes, [15, 20]);
+  assert.deepEqual(READINESS_ACTIONS.yellow.cardio.minutes, [0, 15]);
   assert.deepEqual(READINESS_ACTIONS.yellow.cardio.options, [
     "z1",
     "walk",
@@ -168,18 +168,21 @@ test("permitted actions encode the full traffic-light restrictions", () => {
   ]);
 
   assert.equal(READINESS_ACTIONS.orange.training.mode, "technique_only");
-  assert.deepEqual(READINESS_ACTIONS.orange.training.loadPercentRmref, [50, 65]);
-  assert.deepEqual(READINESS_ACTIONS.orange.training.sets, [2, 3]);
+  assert.deepEqual(
+    READINESS_ACTIONS.orange.training.loadPercentRmref,
+    [50, 60],
+  );
+  assert.deepEqual(READINESS_ACTIONS.orange.training.sets, [2, 2]);
   assert.equal(READINESS_ACTIONS.orange.training.repsPerSet, 3);
   assert.equal(
     READINESS_ACTIONS.orange.training.accessories.volumeReductionPercent,
-    50,
+    100,
   );
   assert.equal(READINESS_ACTIONS.orange.training.accessories.maySkip, true);
   assert.equal(READINESS_ACTIONS.orange.training.singles, "not_permitted");
   assert.equal(READINESS_ACTIONS.orange.training.tests, "not_permitted");
   assert.equal(READINESS_ACTIONS.orange.cardio.symptomFreeOnly, true);
-  assert.deepEqual(READINESS_ACTIONS.orange.cardio.minutes, [10, 20]);
+  assert.deepEqual(READINESS_ACTIONS.orange.cardio.minutes, [0, 0]);
   assert.deepEqual(READINESS_ACTIONS.orange.cardio.options, [
     "z1",
     "walk",

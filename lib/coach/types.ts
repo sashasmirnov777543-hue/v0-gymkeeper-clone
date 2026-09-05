@@ -46,6 +46,7 @@ export type CoachRuntimeContext = Readonly<{
   currentCycle: number | null;
   currentSlot: string | null;
   rmrefKg: number;
+  safetyProfile?: unknown;
   readiness: unknown;
   rhrTrend: unknown;
   recentSessions: readonly unknown[];

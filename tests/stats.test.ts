@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { e1rmForStats, isE1rmExercise } from "../lib/stats.ts";
+import { e1rmForStats, isE1rmExercise } from "../lib/program/legacy-stats.ts";
 test("e1RM только для вариантов жима", () => {
   assert.equal(isE1rmExercise("Жим лёжа"), true);
   assert.equal(isE1rmExercise("Спото-жим"), true);

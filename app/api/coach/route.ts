@@ -1,3 +1,5 @@
+import { safetyProfile } from "@/lib/program/policy";
+import { ACTIVE_PROGRAM_VERSION } from "@/lib/program/version";
 import { NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -30,7 +32,8 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 12;
 
 function allowRequest(now = Date.now()): boolean {
-  while (requests.length && requests[0] < now - RATE_WINDOW_MS) requests.shift();
+  while (requests.length && requests[0] < now - RATE_WINDOW_MS)
+    requests.shift();
   if (requests.length >= RATE_LIMIT) return false;
   requests.push(now);
   return true;
@@ -42,7 +45,11 @@ function configured() {
 
 async function runtimeContext() {
   const [stateRows, recentSessions, rhrRows, pending] = await Promise.all([
-    db.select().from(programState).where(eq(programState.profileKey, "primary")).limit(1),
+    db
+      .select()
+      .from(programState)
+      .where(eq(programState.profileKey, "primary"))
+      .limit(1),
     db
       .select({
         id: sessions.id,
@@ -58,6 +65,7 @@ async function runtimeContext() {
         safetyStopped: sessions.safetyStopped,
         symptoms: sessions.symptoms,
         workoutTitle: workouts.title,
+        workoutKey: workouts.programKey,
         slot: workouts.label,
         block: cycles.block,
         cycleNumber: cycles.number,
@@ -67,7 +75,11 @@ async function runtimeContext() {
       .innerJoin(cycles, eq(workouts.cycleId, cycles.id))
       .orderBy(desc(sessions.startedAt))
       .limit(8),
-    db.select().from(rhrMeasurements).orderBy(desc(rhrMeasurements.measuredOn)).limit(14),
+    db
+      .select()
+      .from(rhrMeasurements)
+      .orderBy(desc(rhrMeasurements.measuredOn))
+      .limit(14),
     db
       .select({
         id: coachProposals.id,
@@ -99,12 +111,13 @@ async function runtimeContext() {
   );
   return {
     now: new Date().toISOString(),
-    programVersion: state?.programVersion ?? "h2-v9-3.0",
+    programVersion: state?.programVersion ?? ACTIVE_PROGRAM_VERSION,
     programDay,
     currentBlock: descriptor?.block ?? null,
     currentCycle: descriptor?.cycle ?? null,
     currentSlot: descriptor?.slot ?? null,
     rmrefKg: state?.rmrefKg ? Number(state.rmrefKg) : 115,
+    safetyProfile: safetyProfile(state?.safetyProfile),
     readiness: recentSessions[0]
       ? {
           level: recentSessions[0].readinessLevel,
@@ -166,7 +179,10 @@ export async function POST(request: Request) {
   }
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > 24_000) {
-    return NextResponse.json({ error: "Сообщение слишком большое" }, { status: 413 });
+    return NextResponse.json(
+      { error: "Сообщение слишком большое" },
+      { status: 413 },
+    );
   }
   let message = "";
   try {
@@ -266,10 +282,14 @@ export async function POST(request: Request) {
             proposalValidation,
           },
         })
-        .returning({ id: coachMessages.id, createdAt: coachMessages.createdAt });
+        .returning({
+          id: coachMessages.id,
+          createdAt: coachMessages.createdAt,
+        });
       if (!proposal) return { assistant, proposal: null };
       const expiresAt = new Date(
-        Date.now() + Math.min(168, Math.max(1, proposal.expiresInHours)) * 3_600_000,
+        Date.now() +
+          Math.min(168, Math.max(1, proposal.expiresInHours)) * 3_600_000,
       );
       const [createdProposal] = await tx
         .insert(coachProposals)

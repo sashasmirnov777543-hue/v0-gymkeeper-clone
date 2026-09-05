@@ -1,5 +1,4 @@
 "use client";
-
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -9,174 +8,101 @@ import { assessReadiness } from "@/lib/readiness";
 import {
   getLocalSession,
   loadLocalSets,
-  loadProgram,
-  type ProgramCache,
+  loadProgramForWorkout,
 } from "@/lib/offline";
-
 export default function OfflineSessionPage() {
   return (
-    <Suspense fallback={<CenteredMessage text="Загрузка..." />}>
-      <OfflineSession />
+    <Suspense fallback={<Message text="Загрузка локальной сессии…" />}>
+      <Offline />
     </Suspense>
   );
 }
-
-function OfflineSession() {
-  const searchParams = useSearchParams();
-  const localKey = searchParams.get("key");
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | {
-        status: "ready";
-        program: ProgramCache;
-        workoutId: number;
-        startedAt: string;
-        readinessLevel: string | null;
-        adaptationPlan: unknown;
-      }
-  >({ status: "loading" });
-
+function Offline() {
+  const key = useSearchParams().get("key");
+  const [loaded, setLoaded] = useState(false);
+  const [local, setLocal] = useState<ReturnType<typeof getLocalSession>>(null);
   useEffect(() => {
-    if (!localKey) {
-      setState({ status: "error", message: "Сессия не указана." });
-      return;
-    }
-    const local = getLocalSession(localKey);
-    if (!local) {
-      setState({
-        status: "error",
-        message:
-          "Локальная сессия не найдена — возможно, она уже синхронизирована.",
-      });
-      return;
-    }
-    const program = loadProgram();
-    if (!program) {
-      setState({
-        status: "error",
-        message:
-          "Программа ещё не сохранена для офлайна. Откройте приложение с интернетом один раз.",
-      });
-      return;
-    }
-    const readiness = local.readiness ? assessReadiness(local.readiness) : null;
-    setState({
-      status: "ready",
-      program,
-      workoutId: local.workoutId,
-      startedAt: local.startedAt,
-      readinessLevel: readiness?.level ?? null,
-      adaptationPlan: readiness?.permittedAction ?? null,
-    });
-  }, [localKey]);
-
-  if (state.status === "loading") return <CenteredMessage text="Загрузка..." />;
-  if (state.status === "error")
-    return <CenteredMessage text={state.message} showHome />;
-
-  const { program, workoutId, startedAt, readinessLevel, adaptationPlan } = state;
-  let workout: ProgramCache["cycles"][number]["workouts"][number] | null = null;
-  let cycle: ProgramCache["cycles"][number] | null = null;
-  for (const c of program.cycles) {
-    const w = c.workouts.find((w) => w.id === workoutId);
-    if (w) {
-      workout = w;
-      cycle = c;
-      break;
-    }
-  }
-
-  if (!workout || !cycle || !localKey) {
+    setLocal(key ? getLocalSession(key) : null);
+    setLoaded(true);
+  }, [key]);
+  if (!loaded) return <Message text="Загрузка…" />;
+  if (!key || !local)
     return (
-      <CenteredMessage text="Тренировка не найдена в офлайн-кэше." showHome />
+      <Message text="Локальная сессия не найдена. Проверьте историю и статус синхронизации; очередь автоматически не удаляется." />
     );
-  }
-
-  if (workout.kind === "cardio") {
-    const cardioSession = {
-      id: localKey,
-      status: "active",
-      startedAt,
-      readinessLevel,
-    };
-    const cardioWorkout = {
-      id: workout.id,
-      title: workout.title,
-      cardioZone: workout.cardioZone,
-      cardioMinutes: workout.cardioMinutes,
-      prescription: workout.prescription,
-    };
-    const cardioCycle = { number: cycle.number, name: cycle.name };
+  const program = loadProgramForWorkout(local.workoutId);
+  const snapshot = local.snapshot;
+  const cycle =
+    snapshot?.cycle ??
+    program?.cycles.find((c) =>
+      c.workouts.some((w) => w.id === local.workoutId),
+    );
+  const workout =
+    snapshot?.workout ?? cycle?.workouts.find((w) => w.id === local.workoutId);
+  if (!cycle || !workout)
+    return (
+      <Message text="Контекст старой сессии не найден. Не очищайте хранилище: очередь записей сохранена и может быть синхронизирована с сетью." />
+    );
+  const assessment = local.readiness ? assessReadiness(local.readiness) : null;
+  if (!snapshot)
+    return (
+      <Message text="Сохранена офлайн-сессия прошлой редакции. Подключите сеть, чтобы перенести фактические записи в историю. Не начинайте по ней новую нагрузку." />
+    );
+  const status = local.finishedAt ? "pending_sync" : "active";
+  if (workout.kind === "cardio")
     return (
       <CardioSession
-        session={cardioSession}
-        workout={cardioWorkout}
-        cycle={cardioCycle}
+        session={{
+          id: key,
+          status,
+          startedAt: local.startedAt,
+          readinessLevel: assessment?.level,
+          adaptationPlan: { revision30: snapshot },
+        }}
+        workout={{
+          id: workout.id,
+          title: workout.title,
+          cardioZone: workout.cardioZone,
+          cardioMinutes: workout.cardioMinutes,
+          prescription: workout.prescription,
+        }}
+        cycle={{ number: cycle.number, name: cycle.name }}
       />
     );
-  }
-
-  let offlineExercises = workout.exercises;
-  if (readinessLevel === "red") offlineExercises = [];
-  else if (readinessLevel === "orange") {
-    const primary = offlineExercises.find((exercise) =>
-      /primary|соревновательный.*жим|жим лёжа с паузой|паузный жим/i.test(
-        `${exercise.role ?? ""} ${exercise.name}`,
-      ),
-    );
-    offlineExercises = primary ? [primary] : [];
-  } else if (readinessLevel === "yellow") {
-    offlineExercises = offlineExercises.filter(
-      (exercise) =>
-        !exercise.isOptional &&
-        !/single|test|calibration/.test(exercise.role ?? ""),
-    );
-  }
-
   return (
     <SessionLogger
       session={{
-        id: 0,
-        status: "active",
-        startedAt,
-        readinessLevel,
-        adaptationPlan,
+        id: local.remoteId ?? 0,
+        status,
+        startedAt: local.startedAt,
+        readinessLevel: assessment?.level,
+        adaptationPlan: { revision30: snapshot },
       }}
-      workout={{ id: workout.id, title: workout.title }}
+      workout={{ id: workout.id, title: workout.title, slot: workout.label }}
       cycle={{
         number: cycle.number,
         name: cycle.name,
-        block: cycle.block ?? "v9",
+        block: cycle.block ?? "h2",
       }}
-      exercises={offlineExercises}
-      initialSets={loadLocalSets(localKey)}
-      lastSetsByName={program.lastSetsByName}
-      offlineKey={localKey}
+      exercises={snapshot.exercises}
+      initialSets={loadLocalSets(key)}
+      lastSetsByName={program?.lastSetsByName ?? {}}
+      offlineKey={key}
+      profile={snapshot.profile}
+      rmrefKg={snapshot.baseKg}
     />
   );
 }
-
-function CenteredMessage({
-  text,
-  showHome,
-}: {
-  text: string;
-  showHome?: boolean;
-}) {
+function Message({ text }: { text: string }) {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
-      <p className="text-pretty text-sm leading-relaxed text-muted-foreground">
-        {text}
-      </p>
-      {showHome && (
-        <Link
-          href="/"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
-        >
-          На главную
-        </Link>
-      )}
+    <main className="mx-auto flex min-h-dvh max-w-lg flex-col items-center justify-center gap-4 p-6 text-center">
+      <p className="text-base leading-relaxed">{text}</p>
+      <Link
+        href="/"
+        className="inline-flex min-h-12 items-center rounded-lg border border-border px-4"
+      >
+        На главную
+      </Link>
     </main>
   );
 }

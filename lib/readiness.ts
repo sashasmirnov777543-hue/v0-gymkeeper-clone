@@ -72,7 +72,7 @@ export type GreenReadinessAction = Readonly<{
 }>;
 
 export type YellowReadinessAction = Readonly<{
-  summary: "No singles, tests, or intensity techniques; reduce one set or reduce weight by 2.5-5%. Cardio: 15-20 minutes Z1, walk, or skip.";
+  summary: "No singles, tests or increases: reduce one working set AND starting weight by 5%; halve accessories. Cardio: min(plan,15) minutes, or skip.";
   training: Readonly<{
     mode: "reduced_plan";
     warmup: "as_planned";
@@ -80,14 +80,14 @@ export type YellowReadinessAction = Readonly<{
     tests: "not_permitted";
     intensityTechniques: "not_permitted";
     adjustment: Readonly<{
-      choice: "reduce_one_set_or_weight";
+      choice: "reduce_one_set_and_weight";
       setsToRemove: 1;
-      weightReductionPercent: readonly [2.5, 5];
+      weightReductionPercent: readonly [5, 5];
     }>;
   }>;
   cardio: Readonly<{
     mode: "recovery_options";
-    minutes: readonly [15, 20];
+    minutes: readonly [0, 15];
     intensity: "Z1";
     options: readonly ["z1", "walk", "skip"];
   }>;
@@ -95,25 +95,25 @@ export type YellowReadinessAction = Readonly<{
 }>;
 
 export type OrangeReadinessAction = Readonly<{
-  summary: "Technique only: 50-65% RMref for 2-3 x 3; reduce accessory volume by 50% or skip it; no singles or tests. If symptom-free, cardio: 10-20 minutes Z1, walk, or rest.";
+  summary: "Technique only: 50-60% R for 2 x 3, easy, no accessories, singles or tests. No planned cardio; usual safe short walk or rest.";
   training: Readonly<{
     mode: "technique_only";
     warmup: "for_technique_work_only";
-    loadPercentRmref: readonly [50, 65];
-    sets: readonly [2, 3];
+    loadPercentRmref: readonly [50, 60];
+    sets: readonly [2, 2];
     repsPerSet: 3;
     singles: "not_permitted";
     tests: "not_permitted";
     intensityTechniques: "not_permitted";
     accessories: Readonly<{
-      volumeReductionPercent: 50;
+      volumeReductionPercent: 100;
       maySkip: true;
     }>;
   }>;
   cardio: Readonly<{
     mode: "recovery_options";
     symptomFreeOnly: true;
-    minutes: readonly [10, 20];
+    minutes: readonly [0, 0];
     intensity: "Z1";
     options: readonly ["z1", "walk", "rest"];
   }>;
@@ -157,7 +157,7 @@ export const READINESS_ACTIONS = {
   },
   yellow: {
     summary:
-      "No singles, tests, or intensity techniques; reduce one set or reduce weight by 2.5-5%. Cardio: 15-20 minutes Z1, walk, or skip.",
+      "No singles, tests or increases: reduce one working set AND starting weight by 5%; halve accessories. Cardio: min(plan,15) minutes, or skip.",
     training: {
       mode: "reduced_plan",
       warmup: "as_planned",
@@ -165,14 +165,14 @@ export const READINESS_ACTIONS = {
       tests: "not_permitted",
       intensityTechniques: "not_permitted",
       adjustment: {
-        choice: "reduce_one_set_or_weight",
+        choice: "reduce_one_set_and_weight",
         setsToRemove: 1,
-        weightReductionPercent: [2.5, 5],
+        weightReductionPercent: [5, 5],
       },
     },
     cardio: {
       mode: "recovery_options",
-      minutes: [15, 20],
+      minutes: [0, 15],
       intensity: "Z1",
       options: ["z1", "walk", "skip"],
     },
@@ -180,25 +180,25 @@ export const READINESS_ACTIONS = {
   },
   orange: {
     summary:
-      "Technique only: 50-65% RMref for 2-3 x 3; reduce accessory volume by 50% or skip it; no singles or tests. If symptom-free, cardio: 10-20 minutes Z1, walk, or rest.",
+      "Technique only: 50-60% R for 2 x 3, easy, no accessories, singles or tests. No planned cardio; usual safe short walk or rest.",
     training: {
       mode: "technique_only",
       warmup: "for_technique_work_only",
-      loadPercentRmref: [50, 65],
-      sets: [2, 3],
+      loadPercentRmref: [50, 60],
+      sets: [2, 2],
       repsPerSet: 3,
       singles: "not_permitted",
       tests: "not_permitted",
       intensityTechniques: "not_permitted",
       accessories: {
-        volumeReductionPercent: 50,
+        volumeReductionPercent: 100,
         maySkip: true,
       },
     },
     cardio: {
       mode: "recovery_options",
       symptomFreeOnly: true,
-      minutes: [10, 20],
+      minutes: [0, 0],
       intensity: "Z1",
       options: ["z1", "walk", "rest"],
     },
@@ -243,7 +243,8 @@ function yellowFactorReasons(input: ReadinessInput): YellowReasonCode[] {
 
   if (
     input.poorSleep === true ||
-    (Number.isFinite(input.sleepMinutes) && (input.sleepMinutes as number) < 360) ||
+    (Number.isFinite(input.sleepMinutes) &&
+      (input.sleepMinutes as number) < 360) ||
     (Number.isFinite(input.sleepQuality) && (input.sleepQuality as number) <= 2)
   ) {
     reasons.push("yellow:poor_sleep");

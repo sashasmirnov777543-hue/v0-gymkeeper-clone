@@ -47,6 +47,10 @@ export type ProgramExercise = Readonly<{
    * при консервативной оценке накопления усталости он выходит за RPE 8.
    */
   conditionalLastSet?: boolean;
+  restSeconds?: number;
+  branchId?: string;
+  afterControlLight?: boolean;
+  progressionEligible?: boolean;
   notes: readonly string[];
 }>;
 
@@ -69,6 +73,10 @@ export type ProgramWorkout = Readonly<{
   title: string;
   duration: MinuteRange | null;
   cardio: CardioPrescription | null;
+  isRestDay?: boolean;
+  isControl?: boolean;
+  isDeload?: boolean;
+  isTaper?: boolean;
   warmupLevel: string | null;
   exercises: readonly ProgramExercise[];
   notes: readonly string[];
@@ -98,7 +106,7 @@ export type ProgramCycle = Readonly<{
 }>;
 
 export type ProgramDefinition = Readonly<{
-  version: "h2-v9-3.0";
+  version: string;
   source: Readonly<{
     title: string;
     revision: string;
